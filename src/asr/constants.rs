@@ -15,28 +15,28 @@ pub const AID: u32 = 401734;
 /// App configuration (Doubao IME)
 pub const APP_NAME: &str = "oime";
 pub const VERSION_CODE: u32 = 100102018;
-pub const VERSION_NAME: &str = "1.1.2";
+pub const VERSION_NAME: &str = "1.1.3";
 pub const CHANNEL: &str = "official";
 pub const PACKAGE: &str = "com.bytedance.android.doubaoime";
 
-/// Default device configuration (simulates Pixel 7 Pro)
+/// Default device configuration (China-market Xiaomi 14, HyperOS / Android 14)
 pub const DEVICE_PLATFORM: &str = "android";
 pub const OS: &str = "android";
 pub const OS_API: &str = "34";
-pub const OS_VERSION: &str = "16";
-pub const DEVICE_TYPE: &str = "Pixel 7 Pro";
-pub const DEVICE_BRAND: &str = "google";
-pub const DEVICE_MODEL: &str = "Pixel 7 Pro";
-pub const RESOLUTION: &str = "1080*2400";
-pub const DPI: &str = "420";
-pub const LANGUAGE: &str = "zh";
+pub const OS_VERSION: &str = "14";
+pub const DEVICE_TYPE: &str = "23127PN0CC";
+pub const DEVICE_BRAND: &str = "Xiaomi";
+pub const DEVICE_MODEL: &str = "23127PN0CC";
+pub const RESOLUTION: &str = "1200*2670";
+pub const DPI: &str = "460";
+pub const LANGUAGE: &str = "zh_CN";
 pub const TIMEZONE: i32 = 8;
 pub const ACCESS: &str = "wifi";
-pub const ROM: &str = "UP1A.231005.007";
-pub const ROM_VERSION: &str = "UP1A.231005.007";
+pub const ROM: &str = "miui_OS1.0.45.0.UNCCNXM";
+pub const ROM_VERSION: &str = "OS1.0.45.0.UNCCNXM";
 
 /// User agent string
-pub const USER_AGENT: &str = "com.bytedance.android.doubaoime/100102018 (Linux; U; Android 16; en_US; Pixel 7 Pro; Build/BP2A.250605.031.A2; Cronet/TTNetVersion:94cf429a 2025-11-17 QuicVersion:1f89f732 2025-05-08)";
+pub const USER_AGENT: &str = "com.bytedance.android.doubaoime/100102018 (Linux; U; Android 14; zh_CN; 23127PN0CC; Build/UKQ1.230804.001; Cronet/TTNetVersion:94cf429a 2025-11-17 QuicVersion:1f89f732 2025-05-08)";
 
 /// Audio configuration
 pub const SAMPLE_RATE: u32 = 16000;
