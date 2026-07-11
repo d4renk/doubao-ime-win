@@ -37,7 +37,10 @@ async fn main() -> Result<()> {
 async fn run_ui_mode() -> Result<()> {
     init_logging(false);
 
-    info!("Starting Doubao Voice Input v{} (UI Mode)", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting Doubao Voice Input v{} (UI Mode)",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Initialize COM for Windows
     #[cfg(target_os = "windows")]
@@ -55,7 +58,10 @@ async fn run_ui_mode() -> Result<()> {
     // Initialize credentials
     let credential_store = CredentialStore::new(&config)?;
     let credentials = credential_store.ensure_credentials().await?;
-    info!("Device registered: {}", &credentials.device_id[..8.min(credentials.device_id.len())]);
+    info!(
+        "Device registered: {}",
+        &credentials.device_id[..8.min(credentials.device_id.len())]
+    );
 
     // Initialize components
     let audio_capture = Arc::new(AudioCapture::new()?);
@@ -85,11 +91,17 @@ async fn run_cli_mode() -> Result<()> {
     init_logging(true);
 
     println!("╔═══════════════════════════════════════════════════════════╗");
-    println!("║     豆包语音输入 - CLI 验证版本 v{}        ║", env!("CARGO_PKG_VERSION"));
+    println!(
+        "║     豆包语音输入 - CLI 验证版本 v{}        ║",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("╚═══════════════════════════════════════════════════════════╝");
     println!();
 
-    info!("Starting Doubao Voice Input v{} (CLI Mode)", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting Doubao Voice Input v{} (CLI Mode)",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Step 1: Load configuration
     println!("[1/5] 加载配置...");
@@ -258,12 +270,15 @@ async fn run_cli_mode() -> Result<()> {
 }
 
 fn init_logging(debug: bool) {
-    let level = if debug { "doubao_voice_input=debug" } else { "doubao_voice_input=info" };
-    
+    let level = if debug {
+        "doubao_voice_input=debug"
+    } else {
+        "doubao_voice_input=info"
+    };
+
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| level.into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| level.into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

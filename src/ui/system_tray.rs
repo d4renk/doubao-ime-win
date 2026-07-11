@@ -150,7 +150,9 @@ pub async fn run_app(
                     #[cfg(target_os = "windows")]
                     {
                         use windows::core::w;
-                        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_OK, MB_ICONINFORMATION};
+                        use windows::Win32::UI::WindowsAndMessaging::{
+                            MessageBoxW, MB_ICONINFORMATION, MB_OK,
+                        };
                         unsafe {
                             MessageBoxW(
                                 None,
@@ -253,8 +255,8 @@ fn load_icon() -> Result<tray_icon::Icon> {
     let radius = (width.min(height) as f32 / 2.0) - 1.0;
 
     // Modern gradient colors (purple to blue)
-    let color_start = (139u8, 92u8, 246u8);  // Purple
-    let color_end = (59u8, 130u8, 246u8);    // Blue
+    let color_start = (139u8, 92u8, 246u8); // Purple
+    let color_end = (59u8, 130u8, 246u8); // Blue
 
     for y in 0..height {
         for x in 0..width {
@@ -265,9 +267,12 @@ fn load_icon() -> Result<tray_icon::Icon> {
             if dist <= radius {
                 // Gradient based on position (top-left to bottom-right)
                 let gradient_t = ((x as f32 / width as f32) + (y as f32 / height as f32)) / 2.0;
-                let r = (color_start.0 as f32 * (1.0 - gradient_t) + color_end.0 as f32 * gradient_t) as u8;
-                let g = (color_start.1 as f32 * (1.0 - gradient_t) + color_end.1 as f32 * gradient_t) as u8;
-                let b = (color_start.2 as f32 * (1.0 - gradient_t) + color_end.2 as f32 * gradient_t) as u8;
+                let r = (color_start.0 as f32 * (1.0 - gradient_t)
+                    + color_end.0 as f32 * gradient_t) as u8;
+                let g = (color_start.1 as f32 * (1.0 - gradient_t)
+                    + color_end.1 as f32 * gradient_t) as u8;
+                let b = (color_start.2 as f32 * (1.0 - gradient_t)
+                    + color_end.2 as f32 * gradient_t) as u8;
 
                 // Soft edge anti-aliasing
                 let alpha = if dist > radius - 1.5 {

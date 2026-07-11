@@ -58,9 +58,7 @@ impl DeviceCredentials {
 
 /// Generate a random openudid (16 hex characters)
 fn generate_openudid() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 8] = rng.gen();
+    let bytes: [u8; 8] = rand::random();
     hex::encode(bytes)
 }
 
@@ -245,10 +243,7 @@ pub async fn register_device(creds: &mut DeviceCredentials) -> Result<()> {
         .await?;
 
     if !response.status().is_success() {
-        return Err(anyhow!(
-            "Device registration failed: {}",
-            response.status()
-        ));
+        return Err(anyhow!("Device registration failed: {}", response.status()));
     }
 
     let result: DeviceRegisterResponse = response.json().await?;

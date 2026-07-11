@@ -98,8 +98,8 @@ impl HotkeyManager {
 
         // Check if we need to use keyboard hook for modifier keys
         let key_lower = double_tap_key.to_lowercase();
-        let use_keyboard_hook =
-            mode == HotkeyMode::DoubleTap && (key_lower == "ctrl" || key_lower == "shift" || key_lower == "alt");
+        let use_keyboard_hook = mode == HotkeyMode::DoubleTap
+            && (key_lower == "ctrl" || key_lower == "shift" || key_lower == "alt");
 
         if use_keyboard_hook {
             // Use Windows keyboard hook for modifier key double-tap
@@ -107,7 +107,12 @@ impl HotkeyManager {
             {
                 let callback_clone = callback.clone();
                 thread::spawn(move || {
-                    run_modifier_double_tap_hook(key_lower, double_tap_interval, is_active, callback_clone);
+                    run_modifier_double_tap_hook(
+                        key_lower,
+                        double_tap_interval,
+                        is_active,
+                        callback_clone,
+                    );
                 });
             }
             #[cfg(not(target_os = "windows"))]
@@ -171,12 +176,11 @@ fn run_modifier_double_tap_hook<F>(
     use std::cell::RefCell;
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_LSHIFT, VK_RSHIFT, VK_LMENU, VK_RMENU,
+        VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_RCONTROL, VK_RMENU, VK_RSHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-        HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYUP,
-        WM_SYSKEYUP,
+        HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYUP, WM_SYSKEYUP,
     };
 
     // Determine which virtual keys to watch
@@ -258,9 +262,7 @@ fn run_modifier_double_tap_hook<F>(
     }
 
     // Install the hook
-    let hook = unsafe {
-        SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0)
-    };
+    let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) };
 
     match hook {
         Ok(h) => {

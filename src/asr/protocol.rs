@@ -248,7 +248,11 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
     }
 
     // Check for VAD start
-    if extra.get("vad_start").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if extra
+        .get("vad_start")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         return AsrResponse {
             response_type: ResponseType::VadStart,
             vad_start: true,

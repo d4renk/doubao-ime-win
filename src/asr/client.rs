@@ -58,7 +58,10 @@ impl AsrClient {
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Sec-WebSocket-Version", "13")
-            .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
             .body(())?;
 
         tracing::info!("Connecting to ASR WebSocket: {}", url);
@@ -117,12 +120,8 @@ impl AsrClient {
                 };
 
                 let timestamp_ms = start_time + frame_index * FRAME_DURATION_MS as u64;
-                let msg = build_task_request(
-                    &request_id_clone,
-                    opus_frame,
-                    frame_state,
-                    timestamp_ms,
-                );
+                let msg =
+                    build_task_request(&request_id_clone, opus_frame, frame_state, timestamp_ms);
 
                 if write.send(Message::Binary(msg)).await.is_err() {
                     tracing::warn!("Failed to send audio frame {}", frame_index);
@@ -130,10 +129,14 @@ impl AsrClient {
                 }
 
                 frame_index += 1;
-                
+
                 // Log every 50 frames (about 1 second)
                 if frame_index % 50 == 0 {
-                    tracing::info!("Sent {} audio frames ({:.1}s)", frame_index, frame_index as f64 * 0.02);
+                    tracing::info!(
+                        "Sent {} audio frames ({:.1}s)",
+                        frame_index,
+                        frame_index as f64 * 0.02
+                    );
                 }
             }
 
