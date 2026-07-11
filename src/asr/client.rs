@@ -79,7 +79,7 @@ impl AsrClient {
         // Send StartTask
         tracing::debug!("Sending StartTask (request_id: {})", &request_id[..8]);
         let start_task_msg = build_start_task(&request_id, &token);
-        write.send(Message::Binary(start_task_msg)).await?;
+        write.send(Message::Binary(start_task_msg.into())).await?;
 
         // Wait for TaskStarted response
         if let Some(Ok(Message::Binary(data))) = read.next().await {
@@ -94,7 +94,9 @@ impl AsrClient {
         tracing::debug!("Sending StartSession");
         let session_config = SessionConfig::new(&device_id);
         let start_session_msg = build_start_session(&request_id, &token, &session_config);
-        write.send(Message::Binary(start_session_msg)).await?;
+        write
+            .send(Message::Binary(start_session_msg.into()))
+            .await?;
 
         // Wait for SessionStarted response
         if let Some(Ok(Message::Binary(data))) = read.next().await {
@@ -123,7 +125,7 @@ impl AsrClient {
                 let msg =
                     build_task_request(&request_id_clone, opus_frame, frame_state, timestamp_ms);
 
-                if write.send(Message::Binary(msg)).await.is_err() {
+                if write.send(Message::Binary(msg.into())).await.is_err() {
                     tracing::warn!("Failed to send audio frame {}", frame_index);
                     break;
                 }
@@ -152,11 +154,11 @@ impl AsrClient {
                     FrameState::Last,
                     timestamp_ms,
                 );
-                let _ = write.send(Message::Binary(msg)).await;
+                let _ = write.send(Message::Binary(msg.into())).await;
 
                 // Send FinishSession
                 let finish_msg = build_finish_session(&request_id_clone, &token_clone);
-                let _ = write.send(Message::Binary(finish_msg)).await;
+                let _ = write.send(Message::Binary(finish_msg.into())).await;
                 tracing::info!("Sent FinishSession");
             }
         });
