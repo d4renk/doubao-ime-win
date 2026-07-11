@@ -6,6 +6,7 @@ Windows 语音输入工具，基于豆包 ASR 实现实时语音识别。
 
 - 🎤 **实时语音识别** - 基于豆包 ASR 的高精度语音识别
 - ⌨️ **双击Ctrl触发** - 快速双击 Ctrl 键开始/停止语音输入
+- 🛠️ **非标准按键绑定** - 支持小爱同学按钮、媒体键和厂商键
 - 📍 **悬浮按钮** - 现代风格可拖动悬浮按钮，左键切换录音，右键退出
 - 🔄 **流式识别** - 实时显示识别结果，支持文本修正
 - 🖥️ **系统托盘** - 托盘图标菜单控制，右键访问设置和退出
@@ -38,6 +39,15 @@ Windows 语音输入工具，基于豆包 ASR 实现实时语音识别。
    - 右键托盘图标打开菜单
    - 菜单项：开始/停止语音输入、设置、退出
 
+### 绑定小爱同学按钮等非标准按键
+
+打开托盘菜单的“设置...”，点击“录入非标准按键”，然后按下目标按键。录入成功后选择“使用非标准按键”并保存。
+
+- **按下切换**：每次按键在开始和停止之间切换。
+- **按住说话**：按下开始录音，松开停止录音。
+- 非标准按键监听只适用于 Windows；程序会保留该按键原有动作，因此小爱同学可能仍会同时响应。
+- 也可以直接在 `config.toml` 的 `[hotkey]` 中填写 `binding = "raw"` 及 `raw_vk_code`、`raw_scan_code`、`raw_extended`。
+
 ## 配置文件
 
 配置文件 `config.toml` 与程序同目录：
@@ -48,10 +58,15 @@ auto_start = false
 language = "zh-CN"
 
 [hotkey]
+binding = "standard"  # "standard" 或 "raw"
 mode = "double_tap"
 combo_key = "Ctrl+Shift+V"
 double_tap_key = "Ctrl"
 double_tap_interval = 300  # 毫秒
+raw_vk_code = 0
+raw_scan_code = 0
+raw_extended = false
+raw_trigger = "toggle"  # "toggle" 或 "hold"
 
 [floating_button]
 enabled = true
@@ -100,7 +115,7 @@ cargo build --release
 | 语音识别 | 豆包 ASR (doubaoime-asr 协议) |
 | 音频采集 | cpal |
 | 音频编码 | Opus |
-| 热键监听 | rdev (双击检测) |
+| 热键监听 | global-hotkey + Windows 低级键盘钩子 |
 | 系统托盘 | tray-icon |
 | 悬浮按钮 | Win32 API (Layered Window) |
 | 文本输入 | Windows SendInput API |

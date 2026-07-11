@@ -99,6 +99,10 @@ impl Default for GeneralConfig {
 /// Hotkey configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotkeyConfig {
+    /// Active binding source: `standard` uses the existing global-hotkey
+    /// implementation, while `raw` listens to a Windows keyboard event.
+    #[serde(default = "default_hotkey_binding")]
+    pub binding: String,
     #[serde(default = "default_hotkey_mode")]
     pub mode: String,
     #[serde(default = "default_combo_key")]
@@ -107,6 +111,22 @@ pub struct HotkeyConfig {
     pub double_tap_key: String,
     #[serde(default = "default_double_tap_interval")]
     pub double_tap_interval: u64,
+    /// Windows virtual-key code captured for a raw binding.
+    #[serde(default)]
+    pub raw_vk_code: u32,
+    /// Windows scan code captured for a raw binding.
+    #[serde(default)]
+    pub raw_scan_code: u32,
+    /// Whether the captured raw key has the extended-key flag.
+    #[serde(default)]
+    pub raw_extended: bool,
+    /// Raw binding behavior: `toggle` or `hold`.
+    #[serde(default = "default_raw_trigger")]
+    pub raw_trigger: String,
+}
+
+fn default_hotkey_binding() -> String {
+    "standard".to_string()
 }
 
 fn default_hotkey_mode() -> String {
@@ -125,13 +145,22 @@ fn default_double_tap_interval() -> u64 {
     300
 }
 
+fn default_raw_trigger() -> String {
+    "toggle".to_string()
+}
+
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
+            binding: default_hotkey_binding(),
             mode: default_hotkey_mode(),
             combo_key: default_combo_key(),
             double_tap_key: default_double_tap_key(),
             double_tap_interval: default_double_tap_interval(),
+            raw_vk_code: 0,
+            raw_scan_code: 0,
+            raw_extended: false,
+            raw_trigger: default_raw_trigger(),
         }
     }
 }

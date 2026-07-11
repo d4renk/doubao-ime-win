@@ -8,7 +8,9 @@ auto_start = false
 language = "zh-CN"
 
 [hotkey]
-# 热键模式: "combo" (组合键) 或 "double_tap" (双击)
+# 绑定来源: "standard" (标准快捷键) 或 "raw" (Windows 非标准按键)
+binding = "standard"
+# 标准热键模式: "combo" (组合键) 或 "double_tap" (双击)
 mode = "combo"
 # 组合键 (当 mode = "combo" 时生效)
 combo_key = "Ctrl+Shift+V"
@@ -16,6 +18,12 @@ combo_key = "Ctrl+Shift+V"
 double_tap_key = "Ctrl"
 # 双击间隔 (毫秒)
 double_tap_interval = 300
+# 非标准按键由设置窗口“录入非标准按键”自动填写
+raw_vk_code = 0
+raw_scan_code = 0
+raw_extended = false
+# 非标准按键触发方式: "toggle" (按下切换) 或 "hold" (按住说话)
+raw_trigger = "toggle"
 
 [floating_button]
 # 是否显示悬浮按钮

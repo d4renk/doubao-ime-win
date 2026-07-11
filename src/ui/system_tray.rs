@@ -19,7 +19,7 @@ use crate::ui::{ButtonState, FloatingButton, FloatingButtonConfig, FloatingButto
 pub async fn run_app(
     config: AppConfig,
     voice_controller: Arc<Mutex<VoiceController>>,
-    _hotkey_manager: HotkeyManager,
+    hotkey_manager: HotkeyManager,
 ) -> Result<()> {
     // Create floating button
     let mut floating_button = FloatingButton::new();
@@ -84,25 +84,49 @@ pub async fn run_app(
     let vc_for_hotkey = voice_controller.clone();
     let state_for_hotkey = button_state_setter.clone();
     let handle_for_hotkey = runtime_handle.clone();
-    _hotkey_manager.on_trigger(move || {
+    hotkey_manager.on_event(move |event| {
         let vc = vc_for_hotkey.clone();
         let setter = state_for_hotkey.clone();
         let handle = handle_for_hotkey.clone();
         handle.spawn(async move {
             let mut controller = vc.lock().await;
-            if controller.is_recording() {
-                tracing::info!("Hotkey: stopping voice input");
-                setter.set_state(ButtonState::Processing);
-                if let Err(e) = controller.stop().await {
-                    tracing::error!("Failed to stop voice input: {}", e);
+            match event {
+                crate::business::HotkeyEvent::Toggle => {
+                    if controller.is_recording() {
+                        tracing::info!("Hotkey: stopping voice input");
+                        setter.set_state(ButtonState::Processing);
+                        if let Err(e) = controller.stop().await {
+                            tracing::error!("Failed to stop voice input: {}", e);
+                        }
+                        setter.set_state(ButtonState::Idle);
+                    } else {
+                        tracing::info!("Hotkey: starting voice input");
+                        if let Err(e) = controller.start().await {
+                            tracing::error!("Failed to start voice input: {}", e);
+                        } else {
+                            setter.set_state(ButtonState::Recording);
+                        }
+                    }
                 }
-                setter.set_state(ButtonState::Idle);
-            } else {
-                tracing::info!("Hotkey: starting voice input");
-                if let Err(e) = controller.start().await {
-                    tracing::error!("Failed to start voice input: {}", e);
-                } else {
-                    setter.set_state(ButtonState::Recording);
+                crate::business::HotkeyEvent::Press => {
+                    if !controller.is_recording() {
+                        tracing::info!("Hotkey: starting press-and-hold voice input");
+                        if let Err(e) = controller.start().await {
+                            tracing::error!("Failed to start voice input: {}", e);
+                        } else {
+                            setter.set_state(ButtonState::Recording);
+                        }
+                    }
+                }
+                crate::business::HotkeyEvent::Release => {
+                    if controller.is_recording() {
+                        tracing::info!("Hotkey: stopping press-and-hold voice input");
+                        setter.set_state(ButtonState::Processing);
+                        if let Err(e) = controller.stop().await {
+                            tracing::error!("Failed to stop voice input: {}", e);
+                        }
+                        setter.set_state(ButtonState::Idle);
+                    }
                 }
             }
         });
@@ -112,6 +136,8 @@ pub async fn run_app(
     let running_clone = running.clone();
     let vc_clone = voice_controller.clone();
     let state_setter_clone = button_state_setter.clone();
+    let settings_config = config.clone();
+    let settings_hotkey_manager = hotkey_manager.clone();
 
     std::thread::spawn(move || {
         while running_clone.load(Ordering::SeqCst) {
@@ -147,21 +173,10 @@ pub async fn run_app(
                     });
                 } else if event.id == settings_id {
                     tracing::info!("Settings from menu");
-                    #[cfg(target_os = "windows")]
-                    {
-                        use windows::core::w;
-                        use windows::Win32::UI::WindowsAndMessaging::{
-                            MessageBoxW, MB_ICONINFORMATION, MB_OK,
-                        };
-                        unsafe {
-                            MessageBoxW(
-                                None,
-                                w!("豆包语音输入 设置\n\n快捷键: 双击 Ctrl 开始/停止录音\n悬浮按钮: 点击切换录音状态\n\n配置文件: config.toml"),
-                                w!("设置"),
-                                MB_OK | MB_ICONINFORMATION,
-                            );
-                        }
-                    }
+                    crate::ui::show_settings(
+                        AppConfig::load_or_default().unwrap_or_else(|_| settings_config.clone()),
+                        settings_hotkey_manager.clone(),
+                    );
                 } else if event.id == quit_id {
                     tracing::info!("Quit from menu");
                     running_clone.store(false, Ordering::SeqCst);
@@ -240,6 +255,7 @@ pub async fn run_app(
         }
     }
 
+    hotkey_manager.stop();
     tracing::info!("Application exiting");
     Ok(())
 }
