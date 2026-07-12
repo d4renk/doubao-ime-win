@@ -186,7 +186,9 @@ mod windows_settings {
                     state.combo_edit = create_control(
                         w!("EDIT"),
                         PCWSTR(wide(&state.config.hotkey.combo_key).as_ptr()),
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | ES_AUTOHSCROLL as u32,
+                        ),
                         135,
                         18,
                         180,
@@ -198,7 +200,9 @@ mod windows_settings {
                     create_control(
                         w!("BUTTON"),
                         w!("录入非标准按键"),
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
+                        ),
                         325,
                         18,
                         150,
@@ -250,7 +254,9 @@ mod windows_settings {
                     create_control(
                         w!("BUTTON"),
                         w!("使用标准快捷键"),
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
+                        ),
                         20,
                         155,
                         145,
@@ -262,7 +268,9 @@ mod windows_settings {
                     create_control(
                         w!("BUTTON"),
                         w!("使用非标准按键"),
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
+                        ),
                         175,
                         155,
                         145,
@@ -278,7 +286,9 @@ mod windows_settings {
                         } else {
                             w!("触发模式：按下切换")
                         },
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
+                        ),
                         330,
                         155,
                         145,
@@ -290,7 +300,9 @@ mod windows_settings {
                     create_control(
                         w!("BUTTON"),
                         w!("保存"),
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
+                        ),
                         300,
                         215,
                         80,
@@ -302,7 +314,9 @@ mod windows_settings {
                     create_control(
                         w!("BUTTON"),
                         w!("取消"),
-                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
+                        ),
                         395,
                         215,
                         80,
@@ -373,7 +387,9 @@ mod windows_settings {
                                 PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
                             }
                         }
-                        ID_CANCEL => PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)),
+                        ID_CANCEL => {
+                            let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                        }
                         _ => {}
                     }
                 });

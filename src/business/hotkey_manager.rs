@@ -263,8 +263,9 @@ impl HotkeyManager {
 
         let result = result_rx.recv_timeout(timeout);
         unsafe {
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
             use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
-            let _ = PostThreadMessageW(thread_id, WM_QUIT, Default::default(), Default::default());
+            let _ = PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
         }
 
         result.map_err(|_| anyhow!("No keyboard event was captured before timeout"))
