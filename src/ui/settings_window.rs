@@ -1,9 +1,9 @@
-//! Lightweight native settings window.
+//! Native user settings window.
 
 use crate::business::HotkeyManager;
 use crate::data::AppConfig;
 
-/// Open the hotkey settings window.
+/// Open the user settings window.
 pub fn show_settings(config: AppConfig, manager: HotkeyManager) {
     #[cfg(target_os = "windows")]
     windows_settings::show(config, manager);
@@ -25,6 +25,7 @@ mod windows_settings {
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Controls::{BST_CHECKED, BST_UNCHECKED};
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     const ID_COMBO: usize = 101;
@@ -34,6 +35,9 @@ mod windows_settings {
     const ID_TRIGGER: usize = 105;
     const ID_SAVE: usize = 106;
     const ID_CANCEL: usize = 107;
+    const ID_AUTO_START: usize = 108;
+    const ID_FLOATING: usize = 109;
+    const ID_VAD: usize = 110;
     const ID_TIMER: usize = 1;
 
     struct DialogState {
@@ -43,6 +47,9 @@ mod windows_settings {
         status_label: HWND,
         source_label: HWND,
         trigger_button: HWND,
+        auto_start_check: HWND,
+        floating_check: HWND,
+        vad_check: HWND,
         capture_rx: Option<Receiver<anyhow::Result<crate::business::RawKeyBinding>>>,
     }
 
@@ -59,6 +66,9 @@ mod windows_settings {
                 status_label: HWND::default(),
                 source_label: HWND::default(),
                 trigger_button: HWND::default(),
+                auto_start_check: HWND::default(),
+                floating_check: HWND::default(),
+                vad_check: HWND::default(),
                 capture_rx: None,
             });
         });
@@ -82,12 +92,12 @@ mod windows_settings {
             let hwnd = CreateWindowExW(
                 WS_EX_DLGMODALFRAME,
                 class_name,
-                w!("豆包语音输入 - 快捷键设置"),
+                w!("豆包语音输入 - 用户设置 / VoiceUtility Settings"),
                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                520,
-                300,
+                760,
+                580,
                 HWND::default(),
                 HMENU::default(),
                 instance,
@@ -155,6 +165,19 @@ mod windows_settings {
         String::from_utf16_lossy(&buffer[..length])
     }
 
+    unsafe fn set_checked(hwnd: HWND, checked: bool) {
+        let value = if checked {
+            BST_CHECKED.0 as usize
+        } else {
+            BST_UNCHECKED.0 as usize
+        };
+        let _ = SendMessageW(hwnd, BM_SETCHECK, WPARAM(value), LPARAM(0));
+    }
+
+    unsafe fn is_checked(hwnd: HWND) -> bool {
+        SendMessageW(hwnd, BM_GETCHECK, WPARAM(0), LPARAM(0)).0 == BST_CHECKED.0 as isize
+    }
+
     unsafe extern "system" fn window_proc(
         hwnd: HWND,
         message: u32,
@@ -173,10 +196,95 @@ mod windows_settings {
 
                     create_control(
                         w!("STATIC"),
+                        w!("设置 / Settings"),
+                        WS_CHILD | WS_VISIBLE,
+                        20,
+                        15,
+                        500,
+                        28,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    create_control(
+                        w!("STATIC"),
+                        w!("常规设置 / General"),
+                        WS_CHILD | WS_VISIBLE,
+                        20,
+                        55,
+                        500,
+                        24,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.auto_start_check = create_control(
+                        w!("BUTTON"),
+                        w!("开机自启 / Auto-start"),
+                        WINDOW_STYLE(
+                            WS_CHILD.0
+                                | WS_VISIBLE.0
+                                | WS_TABSTOP.0
+                                | WS_GROUP.0
+                                | BS_AUTOCHECKBOX as u32,
+                        ),
+                        20,
+                        82,
+                        220,
+                        28,
+                        hwnd,
+                        ID_AUTO_START,
+                        instance,
+                    );
+                    set_checked(state.auto_start_check, state.config.general.auto_start);
+                    state.floating_check = create_control(
+                        w!("BUTTON"),
+                        w!("显示悬浮按钮 / Floating"),
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_AUTOCHECKBOX as u32,
+                        ),
+                        260,
+                        82,
+                        240,
+                        28,
+                        hwnd,
+                        ID_FLOATING,
+                        instance,
+                    );
+                    set_checked(state.floating_check, state.config.floating_button.enabled);
+                    state.vad_check = create_control(
+                        w!("BUTTON"),
+                        w!("VAD 静音检测 / Voice Activity"),
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_AUTOCHECKBOX as u32,
+                        ),
+                        520,
+                        82,
+                        220,
+                        28,
+                        hwnd,
+                        ID_VAD,
+                        instance,
+                    );
+                    set_checked(state.vad_check, state.config.asr.vad_enabled);
+                    create_control(
+                        w!("STATIC"),
+                        w!("热键配置 / Hotkey Configuration"),
+                        WS_CHILD | WS_VISIBLE,
+                        20,
+                        125,
+                        500,
+                        24,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    create_control(
+                        w!("STATIC"),
                         w!("标准组合键："),
                         WS_CHILD | WS_VISIBLE,
                         20,
-                        22,
+                        158,
                         110,
                         24,
                         hwnd,
@@ -190,7 +298,7 @@ mod windows_settings {
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | ES_AUTOHSCROLL as u32,
                         ),
                         135,
-                        18,
+                        154,
                         180,
                         28,
                         hwnd,
@@ -203,8 +311,8 @@ mod windows_settings {
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
                         ),
-                        325,
-                        18,
+                        385,
+                        154,
                         150,
                         28,
                         hwnd,
@@ -220,7 +328,7 @@ mod windows_settings {
                         },
                         WS_CHILD | WS_VISIBLE,
                         20,
-                        65,
+                        200,
                         300,
                         24,
                         hwnd,
@@ -244,7 +352,7 @@ mod windows_settings {
                         },
                         WS_CHILD | WS_VISIBLE,
                         20,
-                        95,
+                        230,
                         455,
                         42,
                         hwnd,
@@ -258,7 +366,7 @@ mod windows_settings {
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
                         ),
                         20,
-                        155,
+                        290,
                         145,
                         30,
                         hwnd,
@@ -271,8 +379,8 @@ mod windows_settings {
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
                         ),
-                        175,
-                        155,
+                        190,
+                        290,
                         145,
                         30,
                         hwnd,
@@ -289,8 +397,8 @@ mod windows_settings {
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
                         ),
-                        330,
-                        155,
+                        360,
+                        290,
                         145,
                         30,
                         hwnd,
@@ -303,8 +411,8 @@ mod windows_settings {
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
                         ),
-                        300,
-                        215,
+                        550,
+                        490,
                         80,
                         30,
                         hwnd,
@@ -317,8 +425,8 @@ mod windows_settings {
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
                         ),
-                        395,
-                        215,
+                        645,
+                        490,
                         80,
                         30,
                         hwnd,
@@ -363,7 +471,11 @@ mod windows_settings {
                             }
                         }
                         ID_SAVE => {
-                            let previous_hotkey = state.config.hotkey.clone();
+                            let previous_config = state.config.clone();
+                            let previous_hotkey = previous_config.hotkey.clone();
+                            state.config.general.auto_start = is_checked(state.auto_start_check);
+                            state.config.floating_button.enabled = is_checked(state.floating_check);
+                            state.config.asr.vad_enabled = is_checked(state.vad_check);
                             state.config.hotkey.combo_key = get_text(state.combo_edit);
                             if let Err(error) = state.manager.reconfigure(&state.config.hotkey) {
                                 let message = wide(&format!("快捷键设置无效：{}", error));
@@ -375,7 +487,7 @@ mod windows_settings {
                                 );
                             } else if let Err(error) = state.config.save() {
                                 let _ = state.manager.reconfigure(&previous_hotkey);
-                                state.config.hotkey = previous_hotkey;
+                                state.config = previous_config;
                                 let message = wide(&format!("保存配置失败：{}", error));
                                 let _ = MessageBoxW(
                                     hwnd,

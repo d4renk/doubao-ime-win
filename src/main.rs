@@ -10,10 +10,11 @@
 use anyhow::Result;
 use std::env;
 use std::io::{self, Write};
-use std::sync::Arc;
+use std::process;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use doubao_voice_input::{
     AppConfig, AsrClient, AudioCapture, CredentialStore, HotkeyManager, TextInserter,
@@ -21,22 +22,36 @@ use doubao_voice_input::{
 };
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     // Check for CLI mode
     let args: Vec<String> = env::args().collect();
     let cli_mode = args.iter().any(|a| a == "--cli" || a == "-c");
 
-    if cli_mode {
+    let result = if cli_mode {
         run_cli_mode().await
     } else {
         run_ui_mode().await
+    };
+
+    if let Err(error) = result {
+        eprintln!("Application failed: {error:#}");
+        process::exit(1);
     }
 }
 
 /// Run in full UI mode with system tray and hotkeys
 async fn run_ui_mode() -> Result<()> {
-    init_logging(false);
+    let startup_logs = init_logging(false);
+    let result = run_ui_mode_inner().await;
 
+    if let Err(error) = &result {
+        report_ui_mode_error(error, &startup_logs);
+    }
+
+    result
+}
+
+async fn run_ui_mode_inner() -> Result<()> {
     info!(
         "Starting Doubao Voice Input v{} (UI Mode)",
         env!("CARGO_PKG_VERSION")
@@ -77,6 +92,7 @@ async fn run_ui_mode() -> Result<()> {
     // Initialize hotkey manager
     let hotkey_manager = HotkeyManager::new(&config.hotkey)?;
     info!("Hotkey registered");
+    info!("Startup initialization complete");
 
     // Run system tray (hotkey callback is set up inside run_app for state sync)
     info!("Starting system tray...");
@@ -88,7 +104,7 @@ async fn run_ui_mode() -> Result<()> {
 
 /// Run in CLI mode for testing
 async fn run_cli_mode() -> Result<()> {
-    init_logging(true);
+    let _ = init_logging(true);
 
     println!("╔═══════════════════════════════════════════════════════════╗");
     println!(
@@ -152,6 +168,7 @@ async fn run_cli_mode() -> Result<()> {
 
     // Step 5: Ready for testing
     println!("[5/5] 初始化完成！");
+    info!("Startup initialization complete");
     println!();
     println!("════════════════════════════════════════════════════════════");
     println!("  功能验证命令:");
@@ -269,17 +286,106 @@ async fn run_cli_mode() -> Result<()> {
     Ok(())
 }
 
-fn init_logging(debug: bool) {
+#[derive(Clone)]
+struct StartupLogWriter {
+    buffer: Arc<StdMutex<String>>,
+}
+
+struct StartupLogWriterGuard {
+    buffer: Arc<StdMutex<String>>,
+}
+
+impl<'a> MakeWriter<'a> for StartupLogWriter {
+    type Writer = StartupLogWriterGuard;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        StartupLogWriterGuard {
+            buffer: self.buffer.clone(),
+        }
+    }
+}
+
+impl Write for StartupLogWriterGuard {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Ok(mut buffer) = self.buffer.lock() {
+            buffer.push_str(&String::from_utf8_lossy(bytes));
+        }
+        io::stderr().write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        io::stderr().flush()
+    }
+}
+
+fn init_logging(debug: bool) -> Arc<StdMutex<String>> {
     let level = if debug {
         "doubao_voice_input=debug"
     } else {
         "doubao_voice_input=info"
     };
+    let startup_logs = Arc::new(StdMutex::new(String::new()));
 
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| level.into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer().with_writer(StartupLogWriter {
+                buffer: startup_logs.clone(),
+            }),
+        )
         .init();
+
+    startup_logs
+}
+
+fn report_ui_mode_error(error: &anyhow::Error, logs: &Arc<StdMutex<String>>) {
+    let startup_logs = logs
+        .lock()
+        .map(|logs| logs.clone())
+        .unwrap_or_else(|_| String::from("日志缓冲读取失败"));
+    let details = if startup_logs.trim().is_empty() {
+        format!("启动失败：{error:#}")
+    } else {
+        format!("启动失败：{error:#}\n\n已捕获的启动日志：\n{startup_logs}")
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(copy_error) = clipboard_win::set_clipboard_string(&details) {
+            eprintln!("Failed to copy UI startup error to clipboard: {copy_error:?}");
+        }
+
+        show_windows_error_message(&details);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        eprintln!("UI mode failed:\n{details}");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn show_windows_error_message(message: &str) {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+
+    let message = message
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let title = "豆包语音输入启动失败"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+
+    unsafe {
+        let _ = MessageBoxW(
+            None,
+            PCWSTR(message.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
+    }
 }
