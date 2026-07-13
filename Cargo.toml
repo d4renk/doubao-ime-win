@@ -21,6 +21,7 @@ rustls = { version = "0.23.41", default-features = false, features = ["ring", "s
 
 # Audio capture
 cpal = "0.15"
+rubato = { version = "0.16.2", default-features = false }
 
 # Opus encoding (with pre-built binaries)
 opus = "0.3"

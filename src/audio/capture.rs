@@ -10,6 +10,7 @@ use std::thread;
 use tokio::sync::mpsc as tokio_mpsc;
 
 use super::encoder::OpusEncoder;
+use super::resampler::AudioResampler;
 
 // Opus encoder always uses 16kHz mono
 const OPUS_SAMPLE_RATE: u32 = 16000;
@@ -150,7 +151,7 @@ fn run_audio_capture(
         samples_per_frame_native, native_channels, samples_per_frame_opus
     );
 
-    let (std_tx, std_rx) = std_mpsc::channel::<Vec<i16>>();
+    let (std_tx, std_rx) = std_mpsc::channel::<Vec<f32>>();
 
     let is_recording_clone = is_recording.clone();
     let frame_counter = Arc::new(AtomicU64::new(0));
@@ -164,7 +165,7 @@ fn run_audio_capture(
     let stream = match sample_format {
         SampleFormat::I16 => {
             println!("[AudioCapture] Building I16 stream");
-            let mut buffer = Vec::<i16>::with_capacity(samples_per_frame_native * 2);
+            let mut buffer = Vec::<f32>::with_capacity(samples_per_frame_native * 2);
 
             device.build_input_stream(
                 &config,
@@ -173,10 +174,10 @@ fn run_audio_capture(
                         return;
                     }
 
-                    buffer.extend_from_slice(data);
+                    buffer.extend(data.iter().map(|sample| *sample as f32 / 32768.0));
 
                     while buffer.len() >= samples_per_frame_native {
-                        let frame: Vec<i16> = buffer.drain(..samples_per_frame_native).collect();
+                        let frame: Vec<f32> = buffer.drain(..samples_per_frame_native).collect();
                         let _ = std_tx.send(frame);
                     }
                 },
@@ -186,7 +187,7 @@ fn run_audio_capture(
         }
         SampleFormat::F32 => {
             println!("[AudioCapture] Building F32 stream");
-            let mut buffer = Vec::<i16>::with_capacity(samples_per_frame_native * 2);
+            let mut buffer = Vec::<f32>::with_capacity(samples_per_frame_native * 2);
 
             device.build_input_stream(
                 &config,
@@ -195,12 +196,10 @@ fn run_audio_capture(
                         return;
                     }
 
-                    // Convert f32 to i16
-                    let samples: Vec<i16> = data.iter().map(|s| (*s * 32767.0) as i16).collect();
-                    buffer.extend_from_slice(&samples);
+                    buffer.extend_from_slice(data);
 
                     while buffer.len() >= samples_per_frame_native {
-                        let frame: Vec<i16> = buffer.drain(..samples_per_frame_native).collect();
+                        let frame: Vec<f32> = buffer.drain(..samples_per_frame_native).collect();
                         let _ = std_tx.send(frame);
                     }
                 },
@@ -217,66 +216,64 @@ fn run_audio_capture(
     println!("[AudioCapture] Stream playing!");
     println!("[Mic] Recording started...");
 
+    let mono_samples_per_native_frame = samples_per_frame_native / native_channels_clone as usize;
+    let mut resampler = AudioResampler::new(
+        native_sample_rate,
+        OPUS_SAMPLE_RATE,
+        mono_samples_per_native_frame,
+        samples_per_frame_opus,
+    )?;
+
     // Process frames: convert to mono 16kHz and encode
     while is_recording.load(Ordering::SeqCst) {
         match std_rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(frame) => {
                 // Step 1: Convert stereo to mono (if needed)
-                let mono_frame: Vec<i16> = if native_channels_clone > 1 {
+                let mono_frame: Vec<f32> = if native_channels_clone > 1 {
                     // Average channels
                     frame
                         .chunks(native_channels_clone as usize)
-                        .map(|chunk| {
-                            let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
-                            (sum / native_channels_clone as i32) as i16
-                        })
+                        .map(|chunk| chunk.iter().sum::<f32>() / native_channels_clone as f32)
                         .collect()
                 } else {
                     frame
                 };
 
-                // Step 2: Resample to 16kHz (if needed)
-                let mono_samples_per_native_frame =
-                    samples_per_frame_native / native_channels_clone as usize;
-                let resampled: Vec<i16> = if mono_samples_per_native_frame != samples_per_frame_opus
-                {
-                    let ratio =
-                        mono_samples_per_native_frame as f32 / samples_per_frame_opus as f32;
-                    (0..samples_per_frame_opus)
-                        .map(|i| {
-                            let src_idx = ((i as f32 * ratio) as usize).min(mono_frame.len() - 1);
-                            mono_frame[src_idx]
+                // Step 2: Continuously resample with anti-alias filtering. The resampler
+                // may return zero or multiple exact-size Opus input frames per chunk.
+                for resampled in resampler.process(&mono_frame)? {
+                    // Step 3: Quantize to signed 16-bit PCM.
+                    let pcm_bytes: Vec<u8> = resampled
+                        .iter()
+                        .flat_map(|sample| {
+                            let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+                            pcm.to_le_bytes()
                         })
-                        .collect()
-                } else {
-                    mono_frame
-                };
+                        .collect();
 
-                // Step 3: Convert to bytes
-                let pcm_bytes: Vec<u8> = resampled.iter().flat_map(|s| s.to_le_bytes()).collect();
+                    // Step 4: Encode to Opus.
+                    match encoder.encode(&pcm_bytes) {
+                        Ok(opus_frame) => {
+                            let count = frame_counter_clone.fetch_add(1, Ordering::SeqCst);
+                            if count == 0 {
+                                println!("[Audio] First frame captured and encoded!");
+                            }
+                            if count > 0 && count % 50 == 0 {
+                                println!(
+                                    "[AudioCapture] Frames: {} ({:.1}s)",
+                                    count,
+                                    count as f32 * 0.02
+                                );
+                            }
 
-                // Step 4: Encode to Opus
-                match encoder.encode(&pcm_bytes) {
-                    Ok(opus_frame) => {
-                        let count = frame_counter_clone.fetch_add(1, Ordering::SeqCst);
-                        if count == 0 {
-                            println!("[Audio] First frame captured and encoded!");
+                            if tokio_tx.try_send(opus_frame).is_err() {
+                                println!("[AudioCapture] Channel full, dropping frame");
+                            }
                         }
-                        if count > 0 && count % 50 == 0 {
-                            println!(
-                                "[AudioCapture] Frames: {} ({:.1}s)",
-                                count,
-                                count as f32 * 0.02
-                            );
-                        }
-
-                        if tokio_tx.try_send(opus_frame).is_err() {
-                            println!("[AudioCapture] Channel full, dropping frame");
-                        }
-                    }
-                    Err(e) => {
-                        if frame_counter_clone.load(Ordering::SeqCst) == 0 {
-                            println!("[AudioCapture] First encode error: {}", e);
+                        Err(e) => {
+                            if frame_counter_clone.load(Ordering::SeqCst) == 0 {
+                                println!("[AudioCapture] First encode error: {}", e);
+                            }
                         }
                     }
                 }
