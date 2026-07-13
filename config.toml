@@ -43,5 +43,5 @@ punctuation_mode = "smart"
 [cloud]
 # 将 ASR final 异步发送给 NER，用于后续上下文和候选优化；不会修改已提交文本
 ner_enabled = true
-# 会话结束后清理口水词；3 秒内成功则自动替换，超时或失败保留 ASR 原文
+# 会话结束后流式清理口水词；10 秒内收到完整结果则自动一次性替换
 auto_polish_enabled = true

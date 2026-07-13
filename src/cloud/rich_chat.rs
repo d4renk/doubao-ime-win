@@ -94,6 +94,9 @@ impl RichChatClient {
         while let Some(chunk) = response.chunk().await? {
             for event in decoder.push(&chunk)? {
                 state.apply(event)?;
+                if let Some(result) = state.completed_result() {
+                    return Ok(result);
+                }
             }
         }
         for event in decoder.finish()? {
@@ -173,6 +176,13 @@ impl RichChatState {
         Ok(())
     }
 
+    fn completed_result(&self) -> Option<RichChatResult> {
+        self.completed.as_ref().map(|content| RichChatResult {
+            content: content.clone(),
+            used_delta_fallback: false,
+        })
+    }
+
     fn finish(self) -> Result<RichChatResult, CloudError> {
         if let Some(content) = self.completed {
             return Ok(RichChatResult {
@@ -233,6 +243,32 @@ mod tests {
                 content: "complete".into(),
                 used_delta_fallback: false,
             }
+        );
+    }
+
+    #[test]
+    fn completed_result_is_available_before_stream_eof() {
+        let mut state = RichChatState::default();
+        state
+            .apply(SseEvent {
+                event: "scene.delta".into(),
+                data: r#"{"content":"part"}"#.into(),
+            })
+            .unwrap();
+        assert!(state.completed_result().is_none());
+
+        state
+            .apply(SseEvent {
+                event: "scene.completed".into(),
+                data: r#"{"content":"complete"}"#.into(),
+            })
+            .unwrap();
+        assert_eq!(
+            state.completed_result(),
+            Some(RichChatResult {
+                content: "complete".into(),
+                used_delta_fallback: false,
+            })
         );
     }
 

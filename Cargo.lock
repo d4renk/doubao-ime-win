@@ -515,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "doubao-voice-input"
-version = "1.2.5"
+version = "1.2.6"
 dependencies = [
  "anyhow",
  "clipboard-win",

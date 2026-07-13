@@ -12,7 +12,7 @@ pub use ner::{NerClient, NerWord};
 pub use rich_chat::{RichChatClient, RichChatInput, RichChatResult};
 
 pub const NER_TASK_BUDGET: Duration = Duration::from_secs(2);
-pub const RICH_CHAT_TIMEOUT: Duration = Duration::from_secs(3);
+pub const RICH_CHAT_TIMEOUT: Duration = Duration::from_secs(10);
 
 const APP_VERSION: &str = "1.3.7";
 const APP_ID: &str = "401734";
@@ -27,7 +27,7 @@ mod tests {
     #[test]
     fn cloud_task_budgets_are_stable() {
         assert_eq!(NER_TASK_BUDGET, Duration::from_secs(2));
-        assert_eq!(RICH_CHAT_TIMEOUT, Duration::from_secs(3));
+        assert_eq!(RICH_CHAT_TIMEOUT, Duration::from_secs(10));
     }
 }
 
