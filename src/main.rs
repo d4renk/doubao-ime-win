@@ -11,7 +11,6 @@ use anyhow::Result;
 use std::env;
 use std::io::{self, Write};
 use std::process;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
@@ -94,7 +93,6 @@ async fn run_ui_mode_inner() -> Result<()> {
     let rich_chat_client = Arc::new(RichChatClient::new(did)?);
     let ner_lexicon = Arc::new(StdMutex::new(NerLexicon::new()));
     let voice_sessions = Arc::new(VoiceSessionStore::new());
-    let (polish_tx, polish_rx) = mpsc::channel();
 
     if config.cloud.ner_enabled {
         let client = ner_client.clone();
@@ -111,7 +109,6 @@ async fn run_ui_mode_inner() -> Result<()> {
             ner_lexicon,
             rich_chat_client,
             voice_sessions.clone(),
-            polish_tx,
         ),
     ));
 
@@ -122,15 +119,7 @@ async fn run_ui_mode_inner() -> Result<()> {
 
     // Run system tray (hotkey callback is set up inside run_app for state sync)
     info!("Starting system tray...");
-    doubao_voice_input::ui::run_app(
-        config,
-        voice_controller,
-        hotkey_manager,
-        polish_rx,
-        voice_sessions,
-        text_inserter,
-    )
-    .await?;
+    doubao_voice_input::ui::run_app(config, voice_controller, hotkey_manager).await?;
 
     info!("Application exited");
     Ok(())

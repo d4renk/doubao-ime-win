@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -13,8 +12,7 @@ use crate::asr::{AsrClient, ResponseType};
 use crate::audio::AudioCapture;
 use crate::business::punctuation::{format_transcript, TranscriptBoundary};
 use crate::business::{
-    capture_context, ContextSnapshot, PolishPresentation, TextInserter, VoiceSessionRecord,
-    VoiceSessionStore,
+    capture_context, ContextSnapshot, TextInserter, VoiceSessionRecord, VoiceSessionStore,
 };
 use crate::cloud::{NerClient, NerLexicon, RichChatClient, RichChatInput};
 use crate::data::{AppConfig, PunctuationMode};
@@ -27,7 +25,6 @@ struct CloudRuntime {
     ner_lexicon: Arc<StdMutex<NerLexicon>>,
     rich_chat_client: Arc<RichChatClient>,
     sessions: Arc<VoiceSessionStore>,
-    polish_tx: Sender<PolishPresentation>,
 }
 
 /// Voice input controller
@@ -67,14 +64,12 @@ impl VoiceController {
         ner_lexicon: Arc<StdMutex<NerLexicon>>,
         rich_chat_client: Arc<RichChatClient>,
         sessions: Arc<VoiceSessionStore>,
-        polish_tx: Sender<PolishPresentation>,
     ) -> Self {
         self.cloud = Some(CloudRuntime {
             ner_client,
             ner_lexicon,
             rich_chat_client,
             sessions,
-            polish_tx,
         });
         self
     }
@@ -290,7 +285,7 @@ impl VoiceController {
                         follows_below: context.follows_below,
                     };
                     if cloud.sessions.publish(record.clone()) {
-                        let task = spawn_polish(cloud.clone(), record);
+                        let task = spawn_polish(cloud.clone(), text_inserter.clone(), record);
                         *polish_task
                             .lock()
                             .unwrap_or_else(|error| error.into_inner()) = Some(task);
@@ -355,7 +350,11 @@ fn spawn_ner_update(client: Arc<NerClient>, lexicon: Arc<StdMutex<NerLexicon>>, 
     });
 }
 
-fn spawn_polish(cloud: CloudRuntime, record: VoiceSessionRecord) -> JoinHandle<()> {
+fn spawn_polish(
+    cloud: CloudRuntime,
+    text_inserter: Arc<TextInserter>,
+    record: VoiceSessionRecord,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let input = RichChatInput {
             query: record.text.clone(),
@@ -363,19 +362,45 @@ fn spawn_polish(cloud: CloudRuntime, record: VoiceSessionRecord) -> JoinHandle<(
             follows_below: record.follows_below.clone(),
         };
         match cloud.rich_chat_client.polish(input).await {
-            Ok(result) if cloud.sessions.is_current(record.generation) => {
-                if cloud
-                    .polish_tx
-                    .send(PolishPresentation {
-                        session: record,
-                        rewritten_text: result.content,
+            Ok(result) => {
+                if result.content.trim().is_empty() {
+                    tracing::warn!(
+                        "Automatic filler cleanup returned empty text; keeping ASR text"
+                    );
+                    return;
+                }
+                if result.content == record.text {
+                    tracing::debug!("Automatic filler cleanup did not change the ASR text");
+                    return;
+                }
+
+                let sessions = cloud.sessions.clone();
+                let generation = record.generation;
+                let target = record.target_window;
+                let inserted_chars = record.inserted_chars;
+                let replacement = result.content;
+                let replace_result = tokio::task::spawn_blocking(move || {
+                    sessions.run_if_current(generation, || {
+                        text_inserter.replace_recent(target, inserted_chars, &replacement)
                     })
-                    .is_err()
-                {
-                    tracing::debug!("Polish UI receiver is no longer available");
+                })
+                .await;
+
+                match replace_result {
+                    Ok(Some(Ok(()))) => {
+                        tracing::info!("Automatically replaced ASR text after filler cleanup")
+                    }
+                    Ok(Some(Err(error))) => {
+                        tracing::warn!("Could not automatically replace ASR text: {}", error)
+                    }
+                    Ok(None) => {
+                        tracing::debug!("Discarding a polish result from an expired voice session")
+                    }
+                    Err(error) => {
+                        tracing::warn!("Automatic text replacement task failed: {}", error)
+                    }
                 }
             }
-            Ok(_) => tracing::debug!("Discarding a polish result from an expired voice session"),
             Err(error) => tracing::warn!("Automatic polish failed: {}", error),
         }
     })

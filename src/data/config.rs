@@ -212,7 +212,7 @@ pub struct CloudConfig {
     /// Send final ASR text to NER for future context and candidate improvement.
     #[serde(default = "default_true")]
     pub ner_enabled: bool,
-    /// Automatically request a complete polish result after a voice session.
+    /// Remove filler speech after a voice session and auto-replace on success.
     #[serde(default = "default_true")]
     pub auto_polish_enabled: bool,
 }
@@ -231,9 +231,9 @@ impl Default for CloudConfig {
 #[serde(rename_all = "snake_case")]
 pub enum AudioQuality {
     /// Official-compatible 16kHz mono Opus.
-    Standard,
-    /// Highest verified format: 24kHz mono Opus.
     #[default]
+    Standard,
+    /// Experimental 24kHz mono Opus; some ASR routes are less accurate.
     HighQuality,
 }
 
@@ -275,10 +275,17 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(config.asr.audio_quality, AudioQuality::HighQuality);
+        assert_eq!(config.asr.audio_quality, AudioQuality::Standard);
+        assert_eq!(config.asr.audio_quality.sample_rate(), 16_000);
         assert_eq!(config.asr.punctuation_mode, PunctuationMode::Smart);
         assert!(config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
+    }
+
+    #[test]
+    fn audio_quality_sample_rates_are_stable() {
+        assert_eq!(AudioQuality::Standard.sample_rate(), 16_000);
+        assert_eq!(AudioQuality::HighQuality.sample_rate(), 24_000);
     }
 
     #[test]

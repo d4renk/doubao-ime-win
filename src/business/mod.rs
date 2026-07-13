@@ -13,4 +13,4 @@ pub use context_capture::{capture_context, ContextSnapshot, TargetWindow};
 pub use hotkey_manager::{HotkeyEvent, HotkeyManager, RawKeyBinding};
 pub use text_inserter::TextInserter;
 pub use voice_controller::VoiceController;
-pub use voice_session::{PolishPresentation, VoiceSessionRecord, VoiceSessionStore};
+pub use voice_session::{VoiceSessionRecord, VoiceSessionStore};

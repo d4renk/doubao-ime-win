@@ -606,7 +606,7 @@ mod windows_settings {
                     set_checked(state.ner_enabled_check, state.config.cloud.ner_enabled);
                     state.auto_polish_enabled_check = create_control(
                         w!("BUTTON"),
-                        w!("自动润色 / Auto polish"),
+                        w!("3 秒去口水词 / Filler cleanup"),
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_AUTOCHECKBOX as u32,
                         ),

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use super::sse::{SseDecoder, SseEvent};
 use super::{http_client, CloudEndpoints, CloudError, RICH_CHAT_TIMEOUT, USER_AGENT};
 
+const FILLER_CLEANUP_INSTRUCTION: &str = "任务：清理语音转写中的口水词。只删除口头语、语气词、重复表达和无意义停顿；除此之外逐字保留有效内容，不扩写、不改写、不翻译，不改变专有名词、数字和原意。不要解释，只输出清理后的文本。\n<语音转写>";
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RichChatInput {
     pub query: String,
@@ -59,9 +61,10 @@ impl RichChatClient {
                 "rich chat query is empty".into(),
             ));
         }
+        let cleanup_query = filler_cleanup_query(&input.query);
         let request = RichChatRequest {
             scene: 5,
-            query: &input.query,
+            query: &cleanup_query,
             preceding_part: &input.preceding_part,
             follows_below: &input.follows_below,
             format_query: "",
@@ -98,6 +101,10 @@ impl RichChatClient {
         }
         state.finish()
     }
+}
+
+fn filler_cleanup_query(transcript: &str) -> String {
+    format!("{FILLER_CLEANUP_INSTRUCTION}\n{transcript}\n</语音转写>")
 }
 
 #[derive(Serialize)]
@@ -286,5 +293,15 @@ mod tests {
                 "output_format": 3,
             })
         );
+    }
+
+    #[test]
+    fn filler_cleanup_prompt_is_narrow_and_preserves_the_transcript() {
+        let query = filler_cleanup_query("嗯这个这个方案可以");
+        assert!(query.contains("口头语"));
+        assert!(query.contains("不扩写"));
+        assert!(query.contains("不改写"));
+        assert!(query.contains("不翻译"));
+        assert!(query.contains("<语音转写>\n嗯这个这个方案可以\n</语音转写>"));
     }
 }

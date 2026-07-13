@@ -36,12 +36,12 @@ position_y = 100
 # 是否启用 VAD (语音活动检测)
 vad_enabled = true
 # 音质: "standard" (16kHz) 或 "high_quality" (24kHz)
-audio_quality = "high_quality"
+audio_quality = "standard"
 # 标点: "smart", "spaces", "no_sentence_final", "preserve"
 punctuation_mode = "smart"
 
 [cloud]
 # 将 ASR final 异步发送给 NER，用于后续上下文和候选优化；不会修改已提交文本
 ner_enabled = true
-# 会话结束后自动请求完整润色结果；仅在用户确认“替换”后写回目标应用
+# 会话结束后清理口水词；3 秒内成功则自动替换，超时或失败保留 ASR 原文
 auto_polish_enabled = true
