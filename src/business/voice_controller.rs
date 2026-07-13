@@ -5,10 +5,14 @@
 use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::task::JoinHandle;
 
 use crate::asr::{AsrClient, ResponseType};
 use crate::audio::AudioCapture;
 use crate::business::TextInserter;
+
+const FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Voice input controller
 pub struct VoiceController {
@@ -16,7 +20,8 @@ pub struct VoiceController {
     audio_capture: Arc<AudioCapture>,
     text_inserter: Arc<TextInserter>,
     is_recording: Arc<AtomicBool>,
-    stop_signal: Arc<AtomicBool>,
+    finish_requested: Arc<AtomicBool>,
+    result_task: Option<JoinHandle<()>>,
 }
 
 impl VoiceController {
@@ -31,7 +36,8 @@ impl VoiceController {
             audio_capture,
             text_inserter,
             is_recording: Arc::new(AtomicBool::new(false)),
-            stop_signal: Arc::new(AtomicBool::new(false)),
+            finish_requested: Arc::new(AtomicBool::new(false)),
+            result_task: None,
         }
     }
 
@@ -55,133 +61,140 @@ impl VoiceController {
             return Ok(());
         }
 
+        if let Some(previous_task) = self.result_task.take() {
+            if !previous_task.is_finished() {
+                tracing::warn!("Cancelling an unfinished ASR result task before starting");
+                previous_task.abort();
+            }
+        }
+
         tracing::info!("Starting voice input...");
-        self.is_recording.store(true, Ordering::SeqCst);
-        self.stop_signal.store(false, Ordering::SeqCst);
+        self.finish_requested.store(false, Ordering::SeqCst);
 
         // Start audio capture
         tracing::debug!("Starting audio capture...");
         let audio_rx = self.audio_capture.start()?;
+        self.is_recording.store(true, Ordering::SeqCst);
         tracing::info!("Audio capture started, frames will be sent to ASR");
 
         // Start ASR
         tracing::debug!("Connecting to ASR server...");
-        let mut result_rx = self.asr_client.start_realtime(audio_rx).await?;
+        let mut result_rx = match self.asr_client.start_realtime(audio_rx).await {
+            Ok(result_rx) => result_rx,
+            Err(error) => {
+                self.audio_capture.stop();
+                self.is_recording.store(false, Ordering::SeqCst);
+                return Err(error);
+            }
+        };
         tracing::info!("ASR connection established");
 
         // Clone for the task
         let text_inserter = self.text_inserter.clone();
         let is_recording = self.is_recording.clone();
-        let stop_signal = self.stop_signal.clone();
+        let finish_requested = self.finish_requested.clone();
         let audio_capture = self.audio_capture.clone();
 
         // Spawn result processing task
-        tokio::spawn(async move {
+        self.result_task = Some(tokio::spawn(async move {
             let mut last_text = String::new();
             let mut response_count = 0u32;
+            let mut completed_normally = false;
 
             tracing::info!("ASR result processing task started");
 
-            loop {
-                // Check stop signal
-                if stop_signal.load(Ordering::SeqCst) {
-                    tracing::info!(
-                        "Voice input stopped by user (processed {} responses)",
-                        response_count
-                    );
-                    break;
-                }
-
-                // Use timeout to periodically check stop signal
-                match tokio::time::timeout(std::time::Duration::from_millis(100), result_rx.recv())
-                    .await
-                {
-                    Ok(Some(response)) => {
-                        response_count += 1;
-                        match response.response_type {
-                            ResponseType::InterimResult => {
-                                tracing::debug!("[INTERIM #{}] {}", response_count, response.text);
-                                println!("📝 [识别中] {}", response.text);
-                                if !response.text.is_empty() {
-                                    if let Err(e) =
-                                        update_text(&text_inserter, &last_text, &response.text)
-                                    {
-                                        tracing::error!("Failed to update text: {}", e);
-                                    }
-                                    last_text = response.text.clone();
-                                }
+            while let Some(response) = result_rx.recv().await {
+                response_count += 1;
+                match response.response_type {
+                    ResponseType::InterimResult => {
+                        tracing::debug!("[INTERIM #{}] {}", response_count, response.text);
+                        println!("📝 [识别中] {}", response.text);
+                        if !response.text.is_empty() {
+                            if let Err(e) = update_text(&text_inserter, &last_text, &response.text)
+                            {
+                                tracing::error!("Failed to update text: {}", e);
                             }
-                            ResponseType::FinalResult => {
-                                tracing::info!("[FINAL #{}] {}", response_count, response.text);
-                                println!("✅ [确认] {}", response.text);
-                                if !response.text.is_empty() {
-                                    if let Err(e) =
-                                        update_text(&text_inserter, &last_text, &response.text)
-                                    {
-                                        tracing::error!("Failed to update text: {}", e);
-                                    }
-                                    // 清空 last_text，这样新的语句不会删除已确认的文字
-                                    last_text = String::new();
-                                }
-                            }
-                            ResponseType::SessionFinished => {
-                                tracing::info!(
-                                    "ASR session finished (total {} responses)",
-                                    response_count
-                                );
-                                println!("🏁 [会话结束]");
-                                break;
-                            }
-                            ResponseType::Error => {
-                                tracing::error!("ASR error: {}", response.error_msg);
-                                println!("❌ [错误] {}", response.error_msg);
-                                break;
-                            }
-                            _ => {
-                                tracing::trace!(
-                                    "Other response type: {:?}",
-                                    response.response_type
-                                );
-                            }
+                            last_text = response.text.clone();
                         }
                     }
-                    Ok(None) => {
-                        // Channel closed
-                        tracing::warn!("ASR result channel closed unexpectedly");
+                    ResponseType::FinalResult => {
+                        tracing::info!("[FINAL #{}] {}", response_count, response.text);
+                        println!("✅ [确认] {}", response.text);
+                        if !response.text.is_empty() {
+                            if let Err(e) = update_text(&text_inserter, &last_text, &response.text)
+                            {
+                                tracing::error!("Failed to update text: {}", e);
+                            }
+                            // A later sentence starts a new incremental text range.
+                            last_text = String::new();
+                        }
+                        if finish_requested.load(Ordering::SeqCst) {
+                            tracing::info!("Final ASR result received while stopping");
+                            completed_normally = true;
+                            break;
+                        }
+                    }
+                    ResponseType::SessionFinished => {
+                        tracing::info!("ASR session finished (total {} responses)", response_count);
+                        println!("🏁 [会话结束]");
+                        completed_normally = true;
                         break;
                     }
-                    Err(_) => {
-                        // Timeout, continue loop to check stop signal
-                        continue;
+                    ResponseType::Error => {
+                        tracing::error!("ASR error: {}", response.error_msg);
+                        println!("❌ [错误] {}", response.error_msg);
+                        break;
+                    }
+                    _ => {
+                        tracing::trace!("Other response type: {:?}", response.response_type);
                     }
                 }
             }
 
-            // Cleanup
+            if !completed_normally {
+                tracing::warn!(
+                    "ASR result stream ended before SessionFinished (processed {} responses)",
+                    response_count
+                );
+            }
+
             audio_capture.stop();
             is_recording.store(false, Ordering::SeqCst);
-        });
+        }));
 
         Ok(())
     }
 
-    /// Stop voice input
+    /// Stop capturing audio and drain the server's final recognition result.
     pub async fn stop(&mut self) -> Result<()> {
         if !self.is_recording() {
             return Ok(());
         }
 
-        tracing::info!("Stopping voice input...");
-
-        // Signal stop
-        self.stop_signal.store(true, Ordering::SeqCst);
+        tracing::info!("Stopping voice input and waiting for the final ASR result...");
+        self.finish_requested.store(true, Ordering::SeqCst);
         self.audio_capture.stop();
 
-        // Wait a bit for the task to finish
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        if let Some(mut result_task) = self.result_task.take() {
+            match tokio::time::timeout(FINAL_RESULT_TIMEOUT, &mut result_task).await {
+                Ok(Ok(())) => {
+                    tracing::info!("Final ASR result processing completed");
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!("ASR result task failed: {}", error);
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Timed out after {:?} waiting for the final ASR result",
+                        FINAL_RESULT_TIMEOUT
+                    );
+                    result_task.abort();
+                    let _ = result_task.await;
+                }
+            }
+        }
 
         self.is_recording.store(false, Ordering::SeqCst);
-
         Ok(())
     }
 }

@@ -112,9 +112,15 @@ impl AsrClient {
         tokio::spawn(async move {
             let mut frame_index = 0u64;
             let start_time = current_time_ms();
+            let mut pending_frame: Option<Vec<u8>> = None;
 
-            // Process audio frames until channel is closed
+            // Keep one valid Opus frame pending so it can be marked as the
+            // final frame when audio capture closes.
             while let Some(opus_frame) = audio_rx.recv().await {
+                let Some(frame_to_send) = pending_frame.replace(opus_frame) else {
+                    continue;
+                };
+
                 let frame_state = if frame_index == 0 {
                     FrameState::First
                 } else {
@@ -123,7 +129,7 @@ impl AsrClient {
 
                 let timestamp_ms = start_time + frame_index * FRAME_DURATION_MS as u64;
                 let msg =
-                    build_task_request(&request_id_clone, opus_frame, frame_state, timestamp_ms);
+                    build_task_request(&request_id_clone, frame_to_send, frame_state, timestamp_ms);
 
                 if write.send(Message::Binary(msg.into())).await.is_err() {
                     tracing::warn!("Failed to send audio frame {}", frame_index);
@@ -142,21 +148,24 @@ impl AsrClient {
                 }
             }
 
-            tracing::info!("Audio channel closed, sent {} total frames", frame_index);
-
-            // Send last frame to signal end
-            if frame_index > 0 {
+            if let Some(final_frame) = pending_frame {
                 let timestamp_ms = start_time + frame_index * FRAME_DURATION_MS as u64;
-                let silent_frame = vec![0u8; 100];
                 let msg = build_task_request(
                     &request_id_clone,
-                    silent_frame,
+                    final_frame,
                     FrameState::Last,
                     timestamp_ms,
                 );
-                let _ = write.send(Message::Binary(msg.into())).await;
+                if write.send(Message::Binary(msg.into())).await.is_ok() {
+                    frame_index += 1;
+                } else {
+                    tracing::warn!("Failed to send final audio frame {}", frame_index);
+                }
+            }
 
-                // Send FinishSession
+            tracing::info!("Audio channel closed, sent {} total frames", frame_index);
+
+            if frame_index > 0 {
                 let finish_msg = build_finish_session(&request_id_clone, &token_clone);
                 let _ = write.send(Message::Binary(finish_msg.into())).await;
                 tracing::info!("Sent FinishSession");

@@ -196,12 +196,15 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
                 ..Default::default()
             };
         }
-        "SessionFinished" => {
+        "SessionFinished" if result_json.is_empty() => {
             return AsrResponse {
                 response_type: ResponseType::SessionFinished,
                 ..Default::default()
             };
         }
+        // Some server versions attach the final recognition result to the
+        // SessionFinished message. Parse that payload before ending locally.
+        "SessionFinished" => {}
         "TaskFailed" | "SessionFailed" => {
             return AsrResponse {
                 response_type: ResponseType::Error,
