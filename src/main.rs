@@ -8,8 +8,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use anyhow::Result;
+use chrono::Local;
 use std::env;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
@@ -318,6 +321,73 @@ struct StartupLogWriterGuard {
     buffer: Arc<StdMutex<String>>,
 }
 
+#[derive(Clone)]
+struct DailyLogWriter {
+    directory: Arc<PathBuf>,
+    state: Arc<StdMutex<DailyLogState>>,
+}
+
+#[derive(Default)]
+struct DailyLogState {
+    date: String,
+    file: Option<File>,
+}
+
+struct DailyLogWriterGuard {
+    writer: DailyLogWriter,
+}
+
+impl DailyLogWriter {
+    fn new(directory: PathBuf) -> Self {
+        Self {
+            directory: Arc::new(directory),
+            state: Arc::new(StdMutex::new(DailyLogState::default())),
+        }
+    }
+
+    fn with_current_file<T>(
+        &self,
+        operation: impl FnOnce(&mut File) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let date = Local::now().format("%Y-%m-%d").to_string();
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("daily log writer lock poisoned"))?;
+
+        if state.file.is_none() || state.date != date {
+            std::fs::create_dir_all(self.directory.as_ref())?;
+            let path = self
+                .directory
+                .join(format!("doubao-voice-input-{date}.log"));
+            state.file = Some(OpenOptions::new().create(true).append(true).open(path)?);
+            state.date = date;
+        }
+
+        operation(state.file.as_mut().expect("daily log file is open"))
+    }
+}
+
+impl<'a> MakeWriter<'a> for DailyLogWriter {
+    type Writer = DailyLogWriterGuard;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        DailyLogWriterGuard {
+            writer: self.clone(),
+        }
+    }
+}
+
+impl Write for DailyLogWriterGuard {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.writer.with_current_file(|file| file.write(bytes))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.with_current_file(File::flush)
+    }
+}
+
 impl<'a> MakeWriter<'a> for StartupLogWriter {
     type Writer = StartupLogWriterGuard;
 
@@ -348,15 +418,27 @@ fn init_logging(debug: bool) -> Arc<StdMutex<String>> {
         "doubao_voice_input=info"
     };
     let startup_logs = Arc::new(StdMutex::new(String::new()));
+    let log_directory = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join("logs")))
+        .unwrap_or_else(|| PathBuf::from("logs"));
 
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| level.into()),
         )
         .with(
-            tracing_subscriber::fmt::layer().with_writer(StartupLogWriter {
-                buffer: startup_logs.clone(),
-            }),
+            tracing_subscriber::fmt::layer()
+                .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
+                .with_writer(StartupLogWriter {
+                    buffer: startup_logs.clone(),
+                }),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
+                .with_writer(DailyLogWriter::new(log_directory)),
         )
         .init();
 
