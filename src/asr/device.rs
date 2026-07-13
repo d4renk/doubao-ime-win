@@ -12,6 +12,10 @@ use uuid::Uuid;
 
 use super::constants::*;
 
+fn http_client() -> Result<Client> {
+    Client::builder().no_proxy().build().map_err(Into::into)
+}
+
 /// Device credentials for ASR authentication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceCredentials {
@@ -202,7 +206,7 @@ struct AsrConfig {
 
 /// Register a new device and get device_id
 pub async fn register_device(creds: &mut DeviceCredentials) -> Result<()> {
-    let client = Client::new();
+    let client = http_client()?;
 
     let header = DeviceRegisterHeader::new(&creds.cdid, &creds.openudid, &creds.clientudid);
     let body = DeviceRegisterBody {
@@ -261,7 +265,7 @@ pub async fn register_device(creds: &mut DeviceCredentials) -> Result<()> {
 
 /// Get ASR token using device_id
 pub async fn get_asr_token(creds: &mut DeviceCredentials) -> Result<()> {
-    let client = Client::new();
+    let client = http_client()?;
 
     let mut params: HashMap<&str, String> = HashMap::new();
     params.insert("device_platform", DEVICE_PLATFORM.to_string());

@@ -12,7 +12,7 @@ repository = "https://github.com/d4renk/doubao-ime-win"
 tokio = { version = "1.35", features = ["full"] }
 
 # HTTP client for device registration
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "query", "rustls-no-provider"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "query", "native-tls"] }
 
 # WebSocket client
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }

@@ -23,6 +23,8 @@ use doubao_voice_input::{
 
 #[tokio::main]
 async fn main() {
+    init_crypto_provider();
+
     // Check for CLI mode
     let args: Vec<String> = env::args().collect();
     let cli_mode = args.iter().any(|a| a == "--cli" || a == "-c");
@@ -37,6 +39,10 @@ async fn main() {
         eprintln!("Application failed: {error:#}");
         process::exit(1);
     }
+}
+
+fn init_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 /// Run in full UI mode with system tray and hotkeys
