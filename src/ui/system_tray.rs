@@ -15,6 +15,9 @@ use crate::business::{HotkeyManager, VoiceController};
 use crate::data::AppConfig;
 use crate::ui::{ButtonState, FloatingButton, FloatingButtonConfig, FloatingButtonEvent};
 
+#[cfg(target_os = "windows")]
+const WM_OPEN_SETTINGS: u32 = 0x8001;
+
 /// Run the application with system tray and floating button
 pub async fn run_app(
     config: AppConfig,
@@ -139,6 +142,9 @@ pub async fn run_app(
     let settings_config = config.clone();
     let settings_hotkey_manager = hotkey_manager.clone();
 
+    #[cfg(target_os = "windows")]
+    let ui_thread_id = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+
     std::thread::spawn(move || {
         while running_clone.load(Ordering::SeqCst) {
             // Check menu events
@@ -173,6 +179,17 @@ pub async fn run_app(
                     });
                 } else if event.id == settings_id {
                     tracing::info!("Settings from menu");
+                    #[cfg(target_os = "windows")]
+                    unsafe {
+                        let _ = windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                            ui_thread_id,
+                            WM_OPEN_SETTINGS,
+                            windows::Win32::Foundation::WPARAM(0),
+                            windows::Win32::Foundation::LPARAM(0),
+                        );
+                    }
+
+                    #[cfg(not(target_os = "windows"))]
                     crate::ui::show_settings(
                         AppConfig::load_or_default().unwrap_or_else(|_| settings_config.clone()),
                         settings_hotkey_manager.clone(),
@@ -182,7 +199,12 @@ pub async fn run_app(
                     running_clone.store(false, Ordering::SeqCst);
                     #[cfg(target_os = "windows")]
                     unsafe {
-                        windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+                        let _ = windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                            ui_thread_id,
+                            windows::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                            windows::Win32::Foundation::WPARAM(0),
+                            windows::Win32::Foundation::LPARAM(0),
+                        );
                     }
                 }
             }
@@ -218,7 +240,12 @@ pub async fn run_app(
                             running_clone.store(false, Ordering::SeqCst);
                             #[cfg(target_os = "windows")]
                             unsafe {
-                                windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+                                let _ = windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                                    ui_thread_id,
+                                    windows::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                                    windows::Win32::Foundation::WPARAM(0),
+                                    windows::Win32::Foundation::LPARAM(0),
+                                );
                             }
                         }
                     }
@@ -238,6 +265,15 @@ pub async fn run_app(
         let mut msg = MSG::default();
         unsafe {
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.message == WM_OPEN_SETTINGS {
+                    tracing::info!("Opening settings on UI thread");
+                    crate::ui::show_settings(
+                        AppConfig::load_or_default().unwrap_or_else(|_| settings_config.clone()),
+                        settings_hotkey_manager.clone(),
+                    );
+                    continue;
+                }
+
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
 

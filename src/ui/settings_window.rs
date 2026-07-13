@@ -43,6 +43,7 @@ mod windows_settings {
     struct DialogState {
         config: AppConfig,
         manager: HotkeyManager,
+        hwnd: HWND,
         combo_edit: HWND,
         status_label: HWND,
         source_label: HWND,
@@ -58,10 +59,27 @@ mod windows_settings {
     }
 
     pub fn show(config: AppConfig, manager: HotkeyManager) {
+        let existing_window = STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|state| state.hwnd)
+                .filter(|hwnd| hwnd.0 != 0)
+        });
+
+        if let Some(hwnd) = existing_window {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+                let _ = SetForegroundWindow(hwnd);
+            }
+            return;
+        }
+
         STATE.with(|state| {
             *state.borrow_mut() = Some(DialogState {
                 config,
                 manager,
+                hwnd: HWND::default(),
                 combo_edit: HWND::default(),
                 status_label: HWND::default(),
                 source_label: HWND::default(),
@@ -104,18 +122,19 @@ mod windows_settings {
                 None,
             );
             if hwnd.0 == 0 {
+                tracing::error!("Failed to create the settings window");
                 STATE.with(|state| *state.borrow_mut() = None);
                 return;
             }
 
-            let mut message = MSG::default();
-            while GetMessageW(&mut message, HWND::default(), 0, 0).as_bool() {
-                let _ = TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
+            STATE.with(|state| {
+                if let Some(state) = state.borrow_mut().as_mut() {
+                    state.hwnd = hwnd;
+                }
+            });
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(hwnd);
         }
-
-        STATE.with(|state| *state.borrow_mut() = None);
     }
 
     unsafe fn create_control(
@@ -191,7 +210,11 @@ mod windows_settings {
                 };
 
                 STATE.with(|state| {
-                    let mut state = state.borrow_mut();
+                    // Creating child controls can synchronously re-enter this
+                    // window procedure through WM_COMMAND notifications.
+                    let Ok(mut state) = state.try_borrow_mut() else {
+                        return;
+                    };
                     let Some(state) = state.as_mut() else { return };
 
                     create_control(
@@ -440,7 +463,9 @@ mod windows_settings {
             WM_COMMAND => {
                 let command = (wparam.0 & 0xffff) as usize;
                 STATE.with(|state| {
-                    let mut state = state.borrow_mut();
+                    let Ok(mut state) = state.try_borrow_mut() else {
+                        return;
+                    };
                     let Some(state) = state.as_mut() else { return };
                     match command {
                         ID_CAPTURE => {
@@ -496,7 +521,7 @@ mod windows_settings {
                                     MB_OK | MB_ICONERROR,
                                 );
                             } else {
-                                PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                                let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
                             }
                         }
                         ID_CANCEL => {
@@ -509,7 +534,9 @@ mod windows_settings {
             }
             WM_TIMER => {
                 STATE.with(|state| {
-                    let mut state = state.borrow_mut();
+                    let Ok(mut state) = state.try_borrow_mut() else {
+                        return;
+                    };
                     let Some(state) = state.as_mut() else { return };
                     if let Some(receiver) = state.capture_rx.as_ref() {
                         match receiver.try_recv() {
@@ -539,11 +566,11 @@ mod windows_settings {
             }
             WM_CLOSE => {
                 let _ = KillTimer(hwnd, ID_TIMER);
-                DestroyWindow(hwnd);
+                let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
             WM_DESTROY => {
-                PostQuitMessage(0);
+                STATE.with(|state| *state.borrow_mut() = None);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, message, wparam, _lparam),
