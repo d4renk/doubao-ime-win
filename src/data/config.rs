@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -18,17 +18,8 @@ pub struct AppConfig {
     pub floating_button: FloatingButtonConfig,
     #[serde(default)]
     pub asr: AsrConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            hotkey: HotkeyConfig::default(),
-            floating_button: FloatingButtonConfig::default(),
-            asr: AsrConfig::default(),
-        }
-    }
+    #[serde(default)]
+    pub cloud: CloudConfig,
 }
 
 impl AppConfig {
@@ -215,6 +206,26 @@ impl Default for AsrConfig {
     }
 }
 
+/// Optional cloud processing applied around voice input sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudConfig {
+    /// Send final ASR text to NER for future context and candidate improvement.
+    #[serde(default = "default_true")]
+    pub ner_enabled: bool,
+    /// Automatically request a complete polish result after a voice session.
+    #[serde(default = "default_true")]
+    pub auto_polish_enabled: bool,
+}
+
+impl Default for CloudConfig {
+    fn default() -> Self {
+        Self {
+            ner_enabled: true,
+            auto_polish_enabled: true,
+        }
+    }
+}
+
 /// Audio format sent to the ASR service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -266,6 +277,22 @@ mod tests {
 
         assert_eq!(config.asr.audio_quality, AudioQuality::HighQuality);
         assert_eq!(config.asr.punctuation_mode, PunctuationMode::Smart);
+        assert!(config.cloud.ner_enabled);
+        assert!(config.cloud.auto_polish_enabled);
+    }
+
+    #[test]
+    fn partial_cloud_config_uses_enabled_defaults() {
+        let config: AppConfig = toml::from_str(
+            r#"
+                [cloud]
+                ner_enabled = false
+            "#,
+        )
+        .unwrap();
+
+        assert!(!config.cloud.ner_enabled);
+        assert!(config.cloud.auto_polish_enabled);
     }
 
     #[test]
@@ -273,11 +300,15 @@ mod tests {
         let mut config = AppConfig::default();
         config.asr.audio_quality = AudioQuality::Standard;
         config.asr.punctuation_mode = PunctuationMode::Preserve;
+        config.cloud.ner_enabled = false;
+        config.cloud.auto_polish_enabled = false;
 
         let serialized = toml::to_string(&config).unwrap();
         let restored: AppConfig = toml::from_str(&serialized).unwrap();
 
         assert_eq!(restored.asr.audio_quality, AudioQuality::Standard);
         assert_eq!(restored.asr.punctuation_mode, PunctuationMode::Preserve);
+        assert!(!restored.cloud.ner_enabled);
+        assert!(!restored.cloud.auto_polish_enabled);
     }
 }

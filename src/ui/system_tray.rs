@@ -4,25 +4,33 @@
 
 use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     TrayIconBuilder,
 };
 
-use crate::business::{HotkeyManager, VoiceController};
+use crate::business::{
+    HotkeyManager, PolishPresentation, TextInserter, VoiceController, VoiceSessionStore,
+};
 use crate::data::AppConfig;
 use crate::ui::{ButtonState, FloatingButton, FloatingButtonConfig, FloatingButtonEvent};
 
 #[cfg(target_os = "windows")]
 const WM_OPEN_SETTINGS: u32 = 0x8001;
+#[cfg(target_os = "windows")]
+const WM_OPEN_POLISH: u32 = 0x8002;
 
 /// Run the application with system tray and floating button
 pub async fn run_app(
     config: AppConfig,
     voice_controller: Arc<Mutex<VoiceController>>,
     hotkey_manager: HotkeyManager,
+    polish_rx: Receiver<PolishPresentation>,
+    voice_sessions: Arc<VoiceSessionStore>,
+    text_inserter: Arc<TextInserter>,
 ) -> Result<()> {
     // Create floating button
     let mut floating_button = FloatingButton::new();
@@ -141,6 +149,8 @@ pub async fn run_app(
     let state_setter_clone = button_state_setter.clone();
     let settings_config = config.clone();
     let settings_hotkey_manager = hotkey_manager.clone();
+    let pending_polish = Arc::new(StdMutex::new(None));
+    let pending_polish_for_thread = pending_polish.clone();
 
     #[cfg(target_os = "windows")]
     let ui_thread_id = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
@@ -251,6 +261,21 @@ pub async fn run_app(
                     }
                 }
             }
+
+            if let Ok(presentation) = polish_rx.try_recv() {
+                *pending_polish_for_thread
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = Some(presentation);
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                        ui_thread_id,
+                        WM_OPEN_POLISH,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
+                }
+            }
         }
     });
 
@@ -271,6 +296,23 @@ pub async fn run_app(
                         AppConfig::load_or_default().unwrap_or_else(|_| settings_config.clone()),
                         settings_hotkey_manager.clone(),
                     );
+                    continue;
+                }
+
+                if msg.message == WM_OPEN_POLISH {
+                    let presentation = pending_polish
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .take();
+                    if let Some(presentation) = presentation.filter(|presentation| {
+                        voice_sessions.is_current(presentation.session.generation)
+                    }) {
+                        crate::ui::show_polish_result(
+                            presentation,
+                            voice_sessions.clone(),
+                            text_inserter.clone(),
+                        );
+                    }
                     continue;
                 }
 

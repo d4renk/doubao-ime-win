@@ -6,10 +6,14 @@
 pub mod asr;
 pub mod audio;
 pub mod business;
+pub mod cloud;
 pub mod data;
 pub mod ui;
 
 pub use asr::AsrClient;
 pub use audio::AudioCapture;
-pub use business::{HotkeyManager, TextInserter, VoiceController};
+pub use business::{
+    HotkeyManager, PolishPresentation, TextInserter, VoiceController, VoiceSessionStore,
+};
+pub use cloud::{NerClient, NerLexicon, RichChatClient};
 pub use data::{AppConfig, CredentialStore};

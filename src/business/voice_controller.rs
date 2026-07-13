@@ -4,17 +4,31 @@
 
 use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
 use crate::asr::{AsrClient, ResponseType};
 use crate::audio::AudioCapture;
 use crate::business::punctuation::{format_transcript, TranscriptBoundary};
-use crate::business::TextInserter;
+use crate::business::{
+    capture_context, ContextSnapshot, PolishPresentation, TextInserter, VoiceSessionRecord,
+    VoiceSessionStore,
+};
+use crate::cloud::{NerClient, NerLexicon, RichChatClient, RichChatInput};
 use crate::data::{AppConfig, PunctuationMode};
 
-const FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(2);
+const ASR_FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone)]
+struct CloudRuntime {
+    ner_client: Arc<NerClient>,
+    ner_lexicon: Arc<StdMutex<NerLexicon>>,
+    rich_chat_client: Arc<RichChatClient>,
+    sessions: Arc<VoiceSessionStore>,
+    polish_tx: Sender<PolishPresentation>,
+}
 
 /// Voice input controller
 pub struct VoiceController {
@@ -24,6 +38,8 @@ pub struct VoiceController {
     is_recording: Arc<AtomicBool>,
     finish_requested: Arc<AtomicBool>,
     result_task: Option<JoinHandle<()>>,
+    polish_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
+    cloud: Option<CloudRuntime>,
 }
 
 impl VoiceController {
@@ -40,7 +56,27 @@ impl VoiceController {
             is_recording: Arc::new(AtomicBool::new(false)),
             finish_requested: Arc::new(AtomicBool::new(false)),
             result_task: None,
+            polish_task: Arc::new(StdMutex::new(None)),
+            cloud: None,
         }
+    }
+
+    pub fn with_cloud(
+        mut self,
+        ner_client: Arc<NerClient>,
+        ner_lexicon: Arc<StdMutex<NerLexicon>>,
+        rich_chat_client: Arc<RichChatClient>,
+        sessions: Arc<VoiceSessionStore>,
+        polish_tx: Sender<PolishPresentation>,
+    ) -> Self {
+        self.cloud = Some(CloudRuntime {
+            ner_client,
+            ner_lexicon,
+            rich_chat_client,
+            sessions,
+            polish_tx,
+        });
+        self
     }
 
     /// Check if currently recording
@@ -70,11 +106,33 @@ impl VoiceController {
             }
         }
 
+        if let Some(previous_task) = self
+            .polish_task
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
+            previous_task.abort();
+        }
+
         tracing::info!("Starting voice input...");
         self.finish_requested.store(false, Ordering::SeqCst);
-        let asr_config = AppConfig::load_or_default()?.asr;
+        let config = AppConfig::load_or_default()?;
+        let asr_config = config.asr;
         let audio_quality = asr_config.audio_quality;
         let punctuation_mode = asr_config.punctuation_mode;
+        let ner_enabled = config.cloud.ner_enabled;
+        let auto_polish_enabled = config.cloud.auto_polish_enabled;
+        let session_generation = self
+            .cloud
+            .as_ref()
+            .map(|cloud| cloud.sessions.begin_session())
+            .unwrap_or_default();
+        let context = if auto_polish_enabled && self.cloud.is_some() {
+            capture_context()
+        } else {
+            ContextSnapshot::default()
+        };
 
         // Start audio capture
         tracing::debug!("Starting audio capture...");
@@ -103,6 +161,8 @@ impl VoiceController {
         let is_recording = self.is_recording.clone();
         let finish_requested = self.finish_requested.clone();
         let audio_capture = self.audio_capture.clone();
+        let cloud = self.cloud.clone();
+        let polish_task = self.polish_task.clone();
 
         // Spawn result processing task
         self.result_task = Some(tokio::spawn(async move {
@@ -110,6 +170,7 @@ impl VoiceController {
             let mut response_count = 0u32;
             let mut completed_normally = false;
             let mut pending_smart_comma = false;
+            let mut session_text = String::new();
 
             tracing::info!("ASR result processing task started");
 
@@ -146,12 +207,23 @@ impl VoiceController {
                             if let Err(e) = update_text(&text_inserter, &last_text, &displayed_text)
                             {
                                 tracing::error!("Failed to update text: {}", e);
+                            } else {
+                                session_text.push_str(&displayed_text);
                             }
                             pending_smart_comma = punctuation_mode == PunctuationMode::Smart
                                 && boundary == TranscriptBoundary::ClauseFinal
                                 && displayed_text.ends_with('，');
                             // A later sentence starts a new incremental text range.
                             last_text = String::new();
+                            if ner_enabled {
+                                if let Some(cloud) = cloud.as_ref() {
+                                    spawn_ner_update(
+                                        cloud.ner_client.clone(),
+                                        cloud.ner_lexicon.clone(),
+                                        response.text.clone(),
+                                    );
+                                }
+                            }
                         }
                         if finish_requested.load(Ordering::SeqCst) {
                             tracing::info!("Final ASR result received while stopping");
@@ -171,11 +243,16 @@ impl VoiceController {
                                     update_text(&text_inserter, &last_text, &final_text)
                                 {
                                     tracing::error!("Failed to finalize punctuation: {}", error);
+                                } else {
+                                    session_text.push_str(&final_text);
                                 }
                                 last_text.clear();
                             } else if pending_smart_comma {
                                 if let Err(error) = replace_last_character(&text_inserter, "。") {
                                     tracing::error!("Failed to finalize punctuation: {}", error);
+                                } else if session_text.ends_with('，') {
+                                    session_text.pop();
+                                    session_text.push('。');
                                 }
                             }
                         }
@@ -202,6 +279,27 @@ impl VoiceController {
                 );
             }
 
+            if completed_normally && auto_polish_enabled && !session_text.trim().is_empty() {
+                if let (Some(cloud), Some(target)) = (cloud.as_ref(), context.target) {
+                    let record = VoiceSessionRecord {
+                        generation: session_generation,
+                        target_window: target,
+                        inserted_chars: session_text.chars().count(),
+                        text: session_text,
+                        preceding_part: context.preceding_part,
+                        follows_below: context.follows_below,
+                    };
+                    if cloud.sessions.publish(record.clone()) {
+                        let task = spawn_polish(cloud.clone(), record);
+                        *polish_task
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner()) = Some(task);
+                    }
+                } else {
+                    tracing::debug!("Skipping automatic polish because no target was captured");
+                }
+            }
+
             audio_capture.stop();
             is_recording.store(false, Ordering::SeqCst);
         }));
@@ -220,7 +318,7 @@ impl VoiceController {
         self.audio_capture.stop();
 
         if let Some(mut result_task) = self.result_task.take() {
-            match tokio::time::timeout(FINAL_RESULT_TIMEOUT, &mut result_task).await {
+            match tokio::time::timeout(ASR_FINAL_RESULT_TIMEOUT, &mut result_task).await {
                 Ok(Ok(())) => {
                     tracing::info!("Final ASR result processing completed");
                 }
@@ -230,7 +328,7 @@ impl VoiceController {
                 Err(_) => {
                     tracing::warn!(
                         "Timed out after {:?} waiting for the final ASR result",
-                        FINAL_RESULT_TIMEOUT
+                        ASR_FINAL_RESULT_TIMEOUT
                     );
                     result_task.abort();
                     let _ = result_task.await;
@@ -241,6 +339,46 @@ impl VoiceController {
         self.is_recording.store(false, Ordering::SeqCst);
         Ok(())
     }
+}
+
+fn spawn_ner_update(client: Arc<NerClient>, lexicon: Arc<StdMutex<NerLexicon>>, text: String) {
+    tokio::spawn(async move {
+        match client.extract_words(&text).await {
+            Ok(words) => {
+                lexicon
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .update(words);
+            }
+            Err(error) => tracing::debug!("NER side request did not update context: {}", error),
+        }
+    });
+}
+
+fn spawn_polish(cloud: CloudRuntime, record: VoiceSessionRecord) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let input = RichChatInput {
+            query: record.text.clone(),
+            preceding_part: record.preceding_part.clone(),
+            follows_below: record.follows_below.clone(),
+        };
+        match cloud.rich_chat_client.polish(input).await {
+            Ok(result) if cloud.sessions.is_current(record.generation) => {
+                if cloud
+                    .polish_tx
+                    .send(PolishPresentation {
+                        session: record,
+                        rewritten_text: result.content,
+                    })
+                    .is_err()
+                {
+                    tracing::debug!("Polish UI receiver is no longer available");
+                }
+            }
+            Ok(_) => tracing::debug!("Discarding a polish result from an expired voice session"),
+            Err(error) => tracing::warn!("Automatic polish failed: {}", error),
+        }
+    })
 }
 
 fn replace_last_character(text_inserter: &TextInserter, replacement: &str) -> Result<()> {

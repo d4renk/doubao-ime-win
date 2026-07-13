@@ -445,7 +445,7 @@ impl FloatingButton {
             RegisterClassExW(&wc);
 
             let hwnd = CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                 cls,
                 w!("豆包语音"),
                 WS_POPUP,

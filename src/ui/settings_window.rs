@@ -40,6 +40,8 @@ mod windows_settings {
     const ID_VAD: usize = 110;
     const ID_AUDIO_QUALITY: usize = 111;
     const ID_PUNCTUATION: usize = 112;
+    const ID_NER_ENABLED: usize = 113;
+    const ID_AUTO_POLISH_ENABLED: usize = 114;
     const ID_TIMER: usize = 1;
 
     struct DialogState {
@@ -55,6 +57,8 @@ mod windows_settings {
         vad_check: HWND,
         audio_quality_combo: HWND,
         punctuation_combo: HWND,
+        ner_enabled_check: HWND,
+        auto_polish_enabled_check: HWND,
         capture_rx: Option<Receiver<anyhow::Result<crate::business::RawKeyBinding>>>,
     }
 
@@ -93,6 +97,8 @@ mod windows_settings {
                 vad_check: HWND::default(),
                 audio_quality_combo: HWND::default(),
                 punctuation_combo: HWND::default(),
+                ner_enabled_check: HWND::default(),
+                auto_polish_enabled_check: HWND::default(),
                 capture_rx: None,
             });
         });
@@ -143,6 +149,7 @@ mod windows_settings {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     unsafe fn create_control(
         class: PCWSTR,
         text: PCWSTR,
@@ -571,6 +578,51 @@ mod windows_settings {
                         punctuation_index(state.config.asr.punctuation_mode),
                     );
                     create_control(
+                        w!("STATIC"),
+                        w!("云端增强 / Cloud Enhancement"),
+                        WS_CHILD | WS_VISIBLE,
+                        465,
+                        345,
+                        270,
+                        24,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.ner_enabled_check = create_control(
+                        w!("BUTTON"),
+                        w!("实体识别 / NER"),
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_AUTOCHECKBOX as u32,
+                        ),
+                        465,
+                        375,
+                        260,
+                        28,
+                        hwnd,
+                        ID_NER_ENABLED,
+                        instance,
+                    );
+                    set_checked(state.ner_enabled_check, state.config.cloud.ner_enabled);
+                    state.auto_polish_enabled_check = create_control(
+                        w!("BUTTON"),
+                        w!("自动润色 / Auto polish"),
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_AUTOCHECKBOX as u32,
+                        ),
+                        465,
+                        420,
+                        260,
+                        28,
+                        hwnd,
+                        ID_AUTO_POLISH_ENABLED,
+                        instance,
+                    );
+                    set_checked(
+                        state.auto_polish_enabled_check,
+                        state.config.cloud.auto_polish_enabled,
+                    );
+                    create_control(
                         w!("BUTTON"),
                         w!("保存"),
                         WINDOW_STYLE(
@@ -603,7 +655,7 @@ mod windows_settings {
                 LRESULT(0)
             }
             WM_COMMAND => {
-                let command = (wparam.0 & 0xffff) as usize;
+                let command = wparam.0 & 0xffff;
                 STATE.with(|state| {
                     let Ok(mut state) = state.try_borrow_mut() else {
                         return;
@@ -648,6 +700,9 @@ mod windows_settings {
                             );
                             state.config.asr.punctuation_mode =
                                 punctuation_from_index(combo_selection(state.punctuation_combo));
+                            state.config.cloud.ner_enabled = is_checked(state.ner_enabled_check);
+                            state.config.cloud.auto_polish_enabled =
+                                is_checked(state.auto_polish_enabled_check);
                             state.config.hotkey.combo_key = get_text(state.combo_edit);
                             if let Err(error) = state.manager.reconfigure(&state.config.hotkey) {
                                 let message = wide(&format!("快捷键设置无效：{}", error));

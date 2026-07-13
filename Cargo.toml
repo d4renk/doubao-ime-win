@@ -1,6 +1,6 @@
 [package]
 name = "doubao-voice-input"
-version = "1.2.3"
+version = "1.2.4"
 edition = "2021"
 authors = ["Doubao Voice Input Team"]
 description = "Windows voice input tool using Doubao ASR"
@@ -70,6 +70,7 @@ windows = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Controls",
+    "Win32_UI_Accessibility",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Security_Cryptography",
     "Win32_System_DataExchange",

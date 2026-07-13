@@ -11,14 +11,15 @@ use anyhow::Result;
 use std::env;
 use std::io::{self, Write};
 use std::process;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use doubao_voice_input::{
-    AppConfig, AsrClient, AudioCapture, CredentialStore, HotkeyManager, TextInserter,
-    VoiceController,
+    AppConfig, AsrClient, AudioCapture, CredentialStore, HotkeyManager, NerClient, NerLexicon,
+    RichChatClient, TextInserter, VoiceController, VoiceSessionStore,
 };
 
 #[tokio::main]
@@ -87,13 +88,32 @@ async fn run_ui_mode_inner() -> Result<()> {
     // Initialize components
     let audio_capture = Arc::new(AudioCapture::new()?);
     let text_inserter = Arc::new(TextInserter::new());
+    let did = credentials.device_id.clone();
     let asr_client = Arc::new(AsrClient::new(credentials));
+    let ner_client = Arc::new(NerClient::new(did.clone())?);
+    let rich_chat_client = Arc::new(RichChatClient::new(did)?);
+    let ner_lexicon = Arc::new(StdMutex::new(NerLexicon::new()));
+    let voice_sessions = Arc::new(VoiceSessionStore::new());
+    let (polish_tx, polish_rx) = mpsc::channel();
 
-    let voice_controller = Arc::new(Mutex::new(VoiceController::new(
-        asr_client,
-        audio_capture,
-        text_inserter,
-    )));
+    if config.cloud.ner_enabled {
+        let client = ner_client.clone();
+        tokio::spawn(async move {
+            if let Err(error) = client.prefetch_token().await {
+                tracing::debug!("Unable to prefetch the NER token: {}", error);
+            }
+        });
+    }
+
+    let voice_controller = Arc::new(Mutex::new(
+        VoiceController::new(asr_client, audio_capture, text_inserter.clone()).with_cloud(
+            ner_client,
+            ner_lexicon,
+            rich_chat_client,
+            voice_sessions.clone(),
+            polish_tx,
+        ),
+    ));
 
     // Initialize hotkey manager
     let hotkey_manager = HotkeyManager::new(&config.hotkey)?;
@@ -102,7 +122,15 @@ async fn run_ui_mode_inner() -> Result<()> {
 
     // Run system tray (hotkey callback is set up inside run_app for state sync)
     info!("Starting system tray...");
-    doubao_voice_input::ui::run_app(config, voice_controller, hotkey_manager).await?;
+    doubao_voice_input::ui::run_app(
+        config,
+        voice_controller,
+        hotkey_manager,
+        polish_rx,
+        voice_sessions,
+        text_inserter,
+    )
+    .await?;
 
     info!("Application exited");
     Ok(())
