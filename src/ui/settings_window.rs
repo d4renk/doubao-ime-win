@@ -42,6 +42,9 @@ mod windows_settings {
     const ID_PUNCTUATION: usize = 112;
     const ID_NER_ENABLED: usize = 113;
     const ID_AUTO_POLISH_ENABLED: usize = 114;
+    const ID_END_SMOOTH_WINDOW: usize = 115;
+    const ID_POST_RATIO_GAIN: usize = 116;
+    const ID_AEC: usize = 117;
     const ID_TIMER: usize = 1;
 
     struct DialogState {
@@ -55,8 +58,11 @@ mod windows_settings {
         auto_start_check: HWND,
         floating_check: HWND,
         vad_check: HWND,
+        aec_check: HWND,
         audio_quality_combo: HWND,
         punctuation_combo: HWND,
+        end_smooth_window_combo: HWND,
+        post_ratio_gain_combo: HWND,
         ner_enabled_check: HWND,
         auto_polish_enabled_check: HWND,
         capture_rx: Option<Receiver<anyhow::Result<crate::business::RawKeyBinding>>>,
@@ -95,8 +101,11 @@ mod windows_settings {
                 auto_start_check: HWND::default(),
                 floating_check: HWND::default(),
                 vad_check: HWND::default(),
+                aec_check: HWND::default(),
                 audio_quality_combo: HWND::default(),
                 punctuation_combo: HWND::default(),
+                end_smooth_window_combo: HWND::default(),
+                post_ratio_gain_combo: HWND::default(),
                 ner_enabled_check: HWND::default(),
                 auto_polish_enabled_check: HWND::default(),
                 capture_rx: None,
@@ -127,7 +136,7 @@ mod windows_settings {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 760,
-                580,
+                680,
                 HWND::default(),
                 HMENU::default(),
                 instance,
@@ -260,6 +269,43 @@ mod windows_settings {
         }
     }
 
+    fn end_smooth_window_index(value: u32) -> usize {
+        match value {
+            0..=600 => 0,
+            601..=1_000 => 1,
+            _ => 2,
+        }
+    }
+
+    fn end_smooth_window_from_index(index: usize) -> u32 {
+        match index {
+            0 => 400,
+            2 => 1_200,
+            _ => 800,
+        }
+    }
+
+    fn post_ratio_gain_index(value: f32) -> usize {
+        if value < 0.875 {
+            0
+        } else if value < 1.125 {
+            1
+        } else if value < 1.375 {
+            2
+        } else {
+            3
+        }
+    }
+
+    fn post_ratio_gain_from_index(index: usize) -> f32 {
+        match index {
+            0 => 0.75,
+            2 => 1.25,
+            3 => 1.5,
+            _ => 1.0,
+        }
+    }
+
     unsafe extern "system" fn window_proc(
         hwnd: HWND,
         message: u32,
@@ -353,6 +399,21 @@ mod windows_settings {
                         instance,
                     );
                     set_checked(state.vad_check, state.config.asr.vad_enabled);
+                    state.aec_check = create_control(
+                        w!("BUTTON"),
+                        w!("AEC3 回声消除 / Echo cancellation"),
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_AUTOCHECKBOX as u32,
+                        ),
+                        20,
+                        550,
+                        415,
+                        28,
+                        hwnd,
+                        ID_AEC,
+                        instance,
+                    );
+                    set_checked(state.aec_check, state.config.asr.aec_enabled);
                     create_control(
                         w!("STATIC"),
                         w!("热键配置 / Hotkey Configuration"),
@@ -579,6 +640,73 @@ mod windows_settings {
                     );
                     create_control(
                         w!("STATIC"),
+                        w!("尾音保留："),
+                        WS_CHILD | WS_VISIBLE,
+                        20,
+                        470,
+                        110,
+                        24,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.end_smooth_window_combo = create_control(
+                        w!("COMBOBOX"),
+                        w!(""),
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | CBS_DROPDOWNLIST as u32,
+                        ),
+                        135,
+                        465,
+                        300,
+                        120,
+                        hwnd,
+                        ID_END_SMOOTH_WINDOW,
+                        instance,
+                    );
+                    add_combo_item(state.end_smooth_window_combo, "短（400 ms）");
+                    add_combo_item(state.end_smooth_window_combo, "标准（800 ms）");
+                    add_combo_item(state.end_smooth_window_combo, "长（1200 ms）");
+                    set_combo_selection(
+                        state.end_smooth_window_combo,
+                        end_smooth_window_index(state.config.asr.end_smooth_window_ms),
+                    );
+                    create_control(
+                        w!("STATIC"),
+                        w!("麦克风增益："),
+                        WS_CHILD | WS_VISIBLE,
+                        20,
+                        515,
+                        110,
+                        24,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.post_ratio_gain_combo = create_control(
+                        w!("COMBOBOX"),
+                        w!(""),
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | CBS_DROPDOWNLIST as u32,
+                        ),
+                        135,
+                        510,
+                        300,
+                        140,
+                        hwnd,
+                        ID_POST_RATIO_GAIN,
+                        instance,
+                    );
+                    add_combo_item(state.post_ratio_gain_combo, "较低（0.75x）");
+                    add_combo_item(state.post_ratio_gain_combo, "原始（1.0x）");
+                    add_combo_item(state.post_ratio_gain_combo, "增强（1.25x）");
+                    add_combo_item(state.post_ratio_gain_combo, "强增强（1.5x）");
+                    set_combo_selection(
+                        state.post_ratio_gain_combo,
+                        post_ratio_gain_index(state.config.asr.post_ratio_gain),
+                    );
+                    create_control(
+                        w!("STATIC"),
                         w!("云端增强 / Cloud Enhancement"),
                         WS_CHILD | WS_VISIBLE,
                         465,
@@ -629,7 +757,7 @@ mod windows_settings {
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
                         ),
                         550,
-                        490,
+                        590,
                         80,
                         30,
                         hwnd,
@@ -643,7 +771,7 @@ mod windows_settings {
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
                         ),
                         645,
-                        490,
+                        590,
                         80,
                         30,
                         hwnd,
@@ -695,11 +823,18 @@ mod windows_settings {
                             state.config.general.auto_start = is_checked(state.auto_start_check);
                             state.config.floating_button.enabled = is_checked(state.floating_check);
                             state.config.asr.vad_enabled = is_checked(state.vad_check);
+                            state.config.asr.aec_enabled = is_checked(state.aec_check);
                             state.config.asr.audio_quality = audio_quality_from_index(
                                 combo_selection(state.audio_quality_combo),
                             );
                             state.config.asr.punctuation_mode =
                                 punctuation_from_index(combo_selection(state.punctuation_combo));
+                            state.config.asr.end_smooth_window_ms = end_smooth_window_from_index(
+                                combo_selection(state.end_smooth_window_combo),
+                            );
+                            state.config.asr.post_ratio_gain = post_ratio_gain_from_index(
+                                combo_selection(state.post_ratio_gain_combo),
+                            );
                             state.config.cloud.ner_enabled = is_checked(state.ner_enabled_check);
                             state.config.cloud.auto_polish_enabled =
                                 is_checked(state.auto_polish_enabled_check);
@@ -782,8 +917,9 @@ mod windows_settings {
     #[cfg(test)]
     mod tests {
         use super::{
-            audio_quality_from_index, audio_quality_index, punctuation_from_index,
-            punctuation_index,
+            audio_quality_from_index, audio_quality_index, end_smooth_window_from_index,
+            end_smooth_window_index, post_ratio_gain_from_index, post_ratio_gain_index,
+            punctuation_from_index, punctuation_index,
         };
         use crate::data::{AudioQuality, PunctuationMode};
 
@@ -806,6 +942,22 @@ mod windows_settings {
                 PunctuationMode::Preserve,
             ] {
                 assert_eq!(punctuation_from_index(punctuation_index(mode)), mode);
+            }
+        }
+
+        #[test]
+        fn audio_processing_combo_mappings_round_trip() {
+            for window in [400, 800, 1_200] {
+                assert_eq!(
+                    end_smooth_window_from_index(end_smooth_window_index(window)),
+                    window
+                );
+            }
+            for gain in [0.75, 1.0, 1.25, 1.5] {
+                assert_eq!(
+                    post_ratio_gain_from_index(post_ratio_gain_index(gain)),
+                    gain
+                );
             }
         }
     }

@@ -4,7 +4,7 @@ mod config;
 mod credential;
 
 pub use config::{
-    AppConfig, AsrConfig, AudioQuality, CloudConfig, FloatingButtonConfig, GeneralConfig,
-    HotkeyConfig, PunctuationMode,
+    AppConfig, AsrConfig, AudioProcessingConfig, AudioQuality, CloudConfig, FloatingButtonConfig,
+    GeneralConfig, HotkeyConfig, PunctuationMode,
 };
 pub use credential::CredentialStore;

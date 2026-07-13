@@ -191,17 +191,58 @@ pub struct AsrConfig {
     #[serde(default = "default_true")]
     pub vad_enabled: bool,
     #[serde(default)]
+    pub aec_enabled: bool,
+    #[serde(default)]
     pub audio_quality: AudioQuality,
     #[serde(default)]
     pub punctuation_mode: PunctuationMode,
+    #[serde(default = "default_end_smooth_window_ms")]
+    pub end_smooth_window_ms: u32,
+    #[serde(default = "default_post_ratio_gain")]
+    pub post_ratio_gain: f32,
 }
 
 impl Default for AsrConfig {
     fn default() -> Self {
         Self {
             vad_enabled: true,
+            aec_enabled: false,
             audio_quality: AudioQuality::default(),
             punctuation_mode: PunctuationMode::default(),
+            end_smooth_window_ms: default_end_smooth_window_ms(),
+            post_ratio_gain: default_post_ratio_gain(),
+        }
+    }
+}
+
+fn default_end_smooth_window_ms() -> u32 {
+    800
+}
+
+fn default_post_ratio_gain() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AudioProcessingConfig {
+    pub vad_enabled: bool,
+    pub aec_enabled: bool,
+    pub end_smooth_window_ms: u32,
+    pub post_ratio_gain: f32,
+}
+
+impl From<&AsrConfig> for AudioProcessingConfig {
+    fn from(config: &AsrConfig) -> Self {
+        let post_ratio_gain = if config.post_ratio_gain.is_finite() {
+            config.post_ratio_gain.clamp(0.25, 4.0)
+        } else {
+            default_post_ratio_gain()
+        };
+        Self {
+            vad_enabled: config.vad_enabled,
+            aec_enabled: config.aec_enabled,
+            end_smooth_window_ms: config.end_smooth_window_ms.min(3_000),
+            post_ratio_gain,
         }
     }
 }
@@ -263,7 +304,7 @@ pub enum PunctuationMode {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppConfig, AudioQuality, PunctuationMode};
+    use super::{AppConfig, AudioProcessingConfig, AudioQuality, PunctuationMode};
 
     #[test]
     fn legacy_config_uses_new_asr_defaults() {
@@ -276,8 +317,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.asr.audio_quality, AudioQuality::Standard);
+        assert!(!config.asr.aec_enabled);
         assert_eq!(config.asr.audio_quality.sample_rate(), 16_000);
         assert_eq!(config.asr.punctuation_mode, PunctuationMode::Smart);
+        assert_eq!(config.asr.end_smooth_window_ms, 800);
+        assert_eq!(config.asr.post_ratio_gain, 1.0);
         assert!(config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
     }
@@ -306,7 +350,10 @@ mod tests {
     fn asr_options_round_trip() {
         let mut config = AppConfig::default();
         config.asr.audio_quality = AudioQuality::Standard;
+        config.asr.aec_enabled = true;
         config.asr.punctuation_mode = PunctuationMode::Preserve;
+        config.asr.end_smooth_window_ms = 1_200;
+        config.asr.post_ratio_gain = 1.25;
         config.cloud.ner_enabled = false;
         config.cloud.auto_polish_enabled = false;
 
@@ -314,8 +361,25 @@ mod tests {
         let restored: AppConfig = toml::from_str(&serialized).unwrap();
 
         assert_eq!(restored.asr.audio_quality, AudioQuality::Standard);
+        assert!(restored.asr.aec_enabled);
         assert_eq!(restored.asr.punctuation_mode, PunctuationMode::Preserve);
+        assert_eq!(restored.asr.end_smooth_window_ms, 1_200);
+        assert_eq!(restored.asr.post_ratio_gain, 1.25);
         assert!(!restored.cloud.ner_enabled);
         assert!(!restored.cloud.auto_polish_enabled);
+    }
+
+    #[test]
+    fn audio_processing_runtime_values_are_bounded() {
+        let mut config = AppConfig::default();
+        config.asr.end_smooth_window_ms = 20_000;
+        config.asr.post_ratio_gain = 10.0;
+        let processing = AudioProcessingConfig::from(&config.asr);
+        assert_eq!(processing.end_smooth_window_ms, 3_000);
+        assert_eq!(processing.post_ratio_gain, 4.0);
+
+        config.asr.post_ratio_gain = f32::NAN;
+        let processing = AudioProcessingConfig::from(&config.asr);
+        assert_eq!(processing.post_ratio_gain, 1.0);
     }
 }

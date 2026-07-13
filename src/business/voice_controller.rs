@@ -15,7 +15,7 @@ use crate::business::{
     capture_context, ContextSnapshot, TextInserter, VoiceSessionRecord, VoiceSessionStore,
 };
 use crate::cloud::{NerClient, NerLexicon, RichChatClient, RichChatInput};
-use crate::data::{AppConfig, PunctuationMode};
+use crate::data::{AppConfig, AudioProcessingConfig, PunctuationMode};
 
 const ASR_SESSION_FINISH_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -115,6 +115,7 @@ impl VoiceController {
         let config = AppConfig::load_or_default()?;
         let asr_config = config.asr;
         let audio_quality = asr_config.audio_quality;
+        let audio_processing = AudioProcessingConfig::from(&asr_config);
         let punctuation_mode = asr_config.punctuation_mode;
         let ner_enabled = config.cloud.ner_enabled;
         let auto_polish_enabled = config.cloud.auto_polish_enabled;
@@ -131,7 +132,7 @@ impl VoiceController {
 
         // Start audio capture
         tracing::debug!("Starting audio capture...");
-        let audio_rx = self.audio_capture.start(audio_quality)?;
+        let audio_rx = self.audio_capture.start(audio_quality, audio_processing)?;
         self.is_recording.store(true, Ordering::SeqCst);
         tracing::info!("Audio capture started, frames will be sent to ASR");
 
@@ -139,7 +140,7 @@ impl VoiceController {
         tracing::debug!("Connecting to ASR server...");
         let mut result_rx = match self
             .asr_client
-            .start_realtime(audio_rx, audio_quality)
+            .start_realtime(audio_rx, audio_quality, asr_config.end_smooth_window_ms)
             .await
         {
             Ok(result_rx) => result_rx,
@@ -173,7 +174,14 @@ impl VoiceController {
                 response_count += 1;
                 match response.response_type {
                     ResponseType::InterimResult => {
-                        tracing::debug!("[INTERIM #{}] {}", response_count, response.text);
+                        tracing::debug!(
+                            "[REVISION #{} stream_finished={} nonstream={} offline={}] {}",
+                            response_count,
+                            response.stream_asr_finished,
+                            response.nonstream_result,
+                            response.is_offline_result,
+                            response.text
+                        );
                         println!("📝 [识别中] {}", response.text);
                         if !response.text.is_empty() {
                             let displayed_text = format_transcript(
@@ -219,13 +227,6 @@ impl VoiceController {
                                     );
                                 }
                             }
-                        }
-                        if response.session_finished {
-                            tracing::info!(
-                                "ASR SessionFinished received with the final recognition result"
-                            );
-                            completed_normally = true;
-                            break;
                         }
                     }
                     ResponseType::SessionFinished => {

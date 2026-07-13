@@ -9,6 +9,7 @@ Windows 语音输入工具，基于豆包 ASR 实现实时语音识别。
 - 🛠️ **非标准按键绑定** - 支持小爱同学按钮、媒体键和厂商键
 - 📍 **悬浮按钮** - 现代风格可拖动悬浮按钮，左键切换录音，右键退出
 - 🔄 **流式识别** - 实时显示识别结果，支持文本修正
+- 🎛️ **音频预处理** - 支持本地 VAD 状态、800 ms 尾音平滑、固定增益与可选 AEC3 回声消除
 - 🖥️ **系统托盘** - 托盘图标菜单控制，右键访问设置和退出
 - ⚙️ **用户设置界面** - 配置开机自启、悬浮按钮、VAD、标准快捷键和非标准按键
 - ☁️ **云端增强可控** - 可分别关闭异步实体识别与会话结束后的 10 秒流式口水词清理
@@ -53,7 +54,14 @@ Windows 语音输入工具，基于豆包 ASR 实现实时语音识别。
 
 ## 发布说明
 
-### v1.2.9（当前版本）
+### v1.2.10（当前版本）
+
+- 按 Streaming、two-pass/three-pass、VAD 分段终态建模：修订结果整体替换当前未固化分段，只有 `is_vad_finished` 固化并异步触发 NER。
+- `stream_asr_finish` 与 `SessionFinished` 仅作为阶段/生命周期事件，不再误当成额外一遍文本识别；补齐 `use_twopass_retry`。
+- 新增本地 VAD 活动观测、默认 800 ms 尾音平滑和可配置 post-ratio 固定增益，音频内容与帧节奏不被 VAD 截断。
+- 新增可选 WebRTC AEC3：通过 WASAPI 获取默认扬声器 loopback 参考流，48 kHz/10 ms 对齐消除回声，初始化失败时自动无损降级。
+
+### v1.2.9
 
 - 运行日志统一写入 EXE 同目录的 `logs` 文件夹，并按本地日期滚动为 `doubao-voice-input-YYYY-MM-DD.log`。
 
@@ -122,6 +130,9 @@ position_y = 100
 
 [asr]
 vad_enabled = true
+aec_enabled = false  # 可选 AEC3，需要默认扬声器 loopback
+end_smooth_window_ms = 800  # 本地 VAD 尾音平滑，并透传云端 ASR
+post_ratio_gain = 1.0  # 固定麦克风增益，范围 0.25-4.0
 audio_quality = "standard"  # 推荐 "standard" (16kHz)；"high_quality" (24kHz) 为实验选项
 punctuation_mode = "smart"  # "smart", "spaces", "no_sentence_final", "preserve"
 

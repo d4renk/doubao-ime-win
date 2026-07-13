@@ -1,6 +1,6 @@
 [package]
 name = "doubao-voice-input"
-version = "1.2.9"
+version = "1.2.10"
 edition = "2021"
 authors = ["Doubao Voice Input Team"]
 description = "Windows voice input tool using Doubao ASR"
@@ -22,6 +22,7 @@ rustls = { version = "0.23.41", default-features = false, features = ["ring", "s
 # Audio capture
 cpal = "0.15"
 rubato = { version = "0.16.2", default-features = false }
+sonora = "0.1.0"
 
 # Opus encoding (with pre-built binaries)
 opus = "0.3"
@@ -67,6 +68,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # Windows API
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4.1"
+wasapi = "0.23.0"
 windows = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_UI_Input_KeyboardAndMouse",

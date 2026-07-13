@@ -44,6 +44,7 @@ impl AsrClient {
         &self,
         mut audio_rx: mpsc::Receiver<Vec<u8>>,
         audio_quality: AudioQuality,
+        end_smooth_window_ms: u32,
     ) -> Result<mpsc::Receiver<AsrResponse>> {
         let url = self.ws_url();
         let request_id = Uuid::new_v4().to_string();
@@ -94,7 +95,7 @@ impl AsrClient {
 
         // Send StartSession
         tracing::debug!("Sending StartSession");
-        let session_config = SessionConfig::new(&device_id, audio_quality);
+        let session_config = SessionConfig::new(&device_id, audio_quality, end_smooth_window_ms);
         let start_session_msg = build_start_session(&request_id, &token, &session_config);
         write
             .send(Message::Binary(start_session_msg.into()))

@@ -35,6 +35,12 @@ position_y = 100
 [asr]
 # 是否启用 VAD (语音活动检测)
 vad_enabled = true
+# WebRTC AEC3 回声消除；需要 Windows 默认扬声器 loopback，失败时自动降级
+aec_enabled = false
+# VAD 语音结束后的尾音保留窗口（毫秒）；同时透传给云端 ASR
+end_smooth_window_ms = 800
+# 编码前固定麦克风增益（0.25-4.0），1.0 保持原始电平
+post_ratio_gain = 1.0
 # 音质: "standard" (16kHz) 或 "high_quality" (24kHz)
 audio_quality = "standard"
 # 标点: "smart", "spaces", "no_sentence_final", "preserve"

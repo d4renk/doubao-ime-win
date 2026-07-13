@@ -9,13 +9,16 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc as tokio_mpsc;
 
+use super::aec::{AecProcessor, LoopbackReference, AEC_FRAME_SAMPLES, AEC_SAMPLE_RATE};
 use super::encoder::OpusEncoder;
+use super::processor::AudioProcessor;
 use super::resampler::AudioResampler;
-use crate::data::AudioQuality;
+use crate::data::{AudioProcessingConfig, AudioQuality};
 
 // The ASR service is verified with mono Opus at 16kHz and 24kHz.
 const OPUS_CHANNELS: u16 = 1;
 const FRAME_DURATION_MS: u32 = 20;
+const AEC_FRAMES_PER_CAPTURE_FRAME: usize = 2;
 
 pub struct AudioCapture {
     is_recording: Arc<AtomicBool>,
@@ -45,7 +48,11 @@ impl AudioCapture {
         self.is_recording.load(Ordering::SeqCst)
     }
 
-    pub fn start(&self, audio_quality: AudioQuality) -> Result<tokio_mpsc::Receiver<Vec<u8>>> {
+    pub fn start(
+        &self,
+        audio_quality: AudioQuality,
+        processing_config: AudioProcessingConfig,
+    ) -> Result<tokio_mpsc::Receiver<Vec<u8>>> {
         if self.is_recording.swap(true, Ordering::SeqCst) {
             return Err(anyhow!("Already recording"));
         }
@@ -68,7 +75,12 @@ impl AudioCapture {
             let _ = std::io::stdout().flush();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_audio_capture(tokio_tx, is_recording.clone(), audio_quality)
+                run_audio_capture(
+                    tokio_tx,
+                    is_recording.clone(),
+                    audio_quality,
+                    processing_config,
+                )
             }));
 
             match result {
@@ -102,6 +114,7 @@ fn run_audio_capture(
     tokio_tx: tokio_mpsc::Sender<Vec<u8>>,
     is_recording: Arc<AtomicBool>,
     audio_quality: AudioQuality,
+    processing_config: AudioProcessingConfig,
 ) -> Result<()> {
     let host = cpal::default_host();
     let device = host
@@ -223,12 +236,51 @@ fn run_audio_capture(
     println!("[Mic] Recording started...");
 
     let mono_samples_per_native_frame = samples_per_frame_native / native_channels_clone as usize;
+    let mut aec_runtime = if processing_config.aec_enabled {
+        match LoopbackReference::start()
+            .and_then(|reference| AecProcessor::new(0).map(|processor| (processor, reference)))
+        {
+            Ok(runtime) => {
+                tracing::info!("AEC3 enabled with WASAPI speaker loopback reference");
+                Some(runtime)
+            }
+            Err(error) => {
+                tracing::warn!("AEC3 unavailable; continuing without echo cancellation: {error:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let aec_active = aec_runtime.is_some();
+    let processing_sample_rate = if aec_active {
+        AEC_SAMPLE_RATE
+    } else {
+        native_sample_rate
+    };
+    let processing_frame_size = if aec_active {
+        AEC_FRAME_SAMPLES * AEC_FRAMES_PER_CAPTURE_FRAME
+    } else {
+        mono_samples_per_native_frame
+    };
+    let mut aec_input_resampler = if aec_active {
+        Some(AudioResampler::new(
+            native_sample_rate,
+            AEC_SAMPLE_RATE,
+            mono_samples_per_native_frame,
+            processing_frame_size,
+        )?)
+    } else {
+        None
+    };
     let mut resampler = AudioResampler::new(
-        native_sample_rate,
+        processing_sample_rate,
         opus_sample_rate,
-        mono_samples_per_native_frame,
+        processing_frame_size,
         samples_per_frame_opus,
     )?;
+    let mut processor = AudioProcessor::new(processing_config);
+    let mut last_voice_activity = None;
 
     // Process frames: convert to mono 16kHz and encode
     while is_recording.load(Ordering::SeqCst) {
@@ -245,40 +297,70 @@ fn run_audio_capture(
                     frame
                 };
 
-                // Step 2: Continuously resample with anti-alias filtering. The resampler
-                // may return zero or multiple exact-size Opus input frames per chunk.
-                for resampled in resampler.process(&mono_frame)? {
-                    // Step 3: Quantize to signed 16-bit PCM.
-                    let pcm_bytes: Vec<u8> = resampled
-                        .iter()
-                        .flat_map(|sample| {
-                            let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
-                            pcm.to_le_bytes()
-                        })
-                        .collect();
+                let processing_frames = if let Some(input_resampler) = aec_input_resampler.as_mut()
+                {
+                    input_resampler.process(&mono_frame)?
+                } else {
+                    vec![mono_frame]
+                };
 
-                    // Step 4: Encode to Opus.
-                    match encoder.encode(&pcm_bytes) {
-                        Ok(opus_frame) => {
-                            let count = frame_counter_clone.fetch_add(1, Ordering::SeqCst);
-                            if count == 0 {
-                                println!("[Audio] First frame captured and encoded!");
-                            }
-                            if count > 0 && count % 50 == 0 {
-                                println!(
-                                    "[AudioCapture] Frames: {} ({:.1}s)",
-                                    count,
-                                    count as f32 * 0.02
-                                );
-                            }
-
-                            if tokio_tx.try_send(opus_frame).is_err() {
-                                println!("[AudioCapture] Channel full, dropping frame");
-                            }
+                for processing_frame in processing_frames {
+                    let aec_result = aec_runtime
+                        .as_mut()
+                        .map(|(aec, reference)| cancel_echo(aec, reference, &processing_frame));
+                    let echo_cancelled = match aec_result {
+                        Some(Ok(frame)) => frame,
+                        Some(Err(error)) => {
+                            tracing::warn!(
+                                "AEC3 processing failed; disabling it for this session: {error:#}"
+                            );
+                            aec_runtime = None;
+                            processing_frame
                         }
-                        Err(e) => {
-                            if frame_counter_clone.load(Ordering::SeqCst) == 0 {
-                                println!("[AudioCapture] First encode error: {}", e);
+                        None => processing_frame,
+                    };
+
+                    // Continuously resample with anti-alias filtering. The resampler may
+                    // return zero or multiple exact-size Opus input frames per chunk.
+                    for mut resampled in resampler.process(&echo_cancelled)? {
+                        let voice_activity = processor.process(&mut resampled);
+                        if processing_config.vad_enabled
+                            && last_voice_activity != Some(voice_activity)
+                        {
+                            tracing::debug!(active = voice_activity, "Local VAD state changed");
+                            last_voice_activity = Some(voice_activity);
+                        }
+                        let pcm_bytes: Vec<u8> = resampled
+                            .iter()
+                            .flat_map(|sample| {
+                                let pcm =
+                                    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+                                pcm.to_le_bytes()
+                            })
+                            .collect();
+
+                        match encoder.encode(&pcm_bytes) {
+                            Ok(opus_frame) => {
+                                let count = frame_counter_clone.fetch_add(1, Ordering::SeqCst);
+                                if count == 0 {
+                                    println!("[Audio] First frame captured and encoded!");
+                                }
+                                if count > 0 && count % 50 == 0 {
+                                    println!(
+                                        "[AudioCapture] Frames: {} ({:.1}s)",
+                                        count,
+                                        count as f32 * 0.02
+                                    );
+                                }
+
+                                if tokio_tx.try_send(opus_frame).is_err() {
+                                    println!("[AudioCapture] Channel full, dropping frame");
+                                }
+                            }
+                            Err(e) => {
+                                if frame_counter_clone.load(Ordering::SeqCst) == 0 {
+                                    println!("[AudioCapture] First encode error: {}", e);
+                                }
                             }
                         }
                     }
@@ -303,4 +385,69 @@ fn run_audio_capture(
     );
 
     Ok(())
+}
+
+fn cancel_echo(
+    processor: &mut AecProcessor,
+    reference: &LoopbackReference,
+    capture: &[f32],
+) -> Result<Vec<f32>> {
+    if capture.len() != AEC_FRAME_SAMPLES * AEC_FRAMES_PER_CAPTURE_FRAME {
+        return Err(anyhow!(
+            "AEC input must contain {} samples, got {}",
+            AEC_FRAME_SAMPLES * AEC_FRAMES_PER_CAPTURE_FRAME,
+            capture.len()
+        ));
+    }
+
+    let mut render_frames = 0;
+    while let Some(render) = reference.try_recv() {
+        processor.analyze_render(&render)?;
+        render_frames += 1;
+    }
+    let silence = [0.0; AEC_FRAME_SAMPLES];
+    while render_frames < AEC_FRAMES_PER_CAPTURE_FRAME {
+        processor.analyze_render(&silence)?;
+        render_frames += 1;
+    }
+
+    let mut output = Vec::with_capacity(capture.len());
+    for frame in capture.chunks_exact(AEC_FRAME_SAMPLES) {
+        output.extend(processor.process_capture(frame)?);
+    }
+    Ok(output)
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod hardware_tests {
+    use super::AudioCapture;
+    use crate::data::{AudioProcessingConfig, AudioQuality};
+
+    #[tokio::test]
+    #[ignore = "requires the local Windows microphone and default render endpoint"]
+    async fn production_capture_pipeline_emits_opus_with_aec() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .try_init();
+        let capture = AudioCapture::new().expect("default microphone must be available");
+        let mut receiver = capture
+            .start(
+                AudioQuality::Standard,
+                AudioProcessingConfig {
+                    vad_enabled: true,
+                    aec_enabled: true,
+                    end_smooth_window_ms: 800,
+                    post_ratio_gain: 1.0,
+                },
+            )
+            .expect("AEC capture pipeline must start");
+
+        let encoded = tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+            .await
+            .expect("capture pipeline produced no frame within five seconds")
+            .expect("capture pipeline closed before producing a frame");
+        capture.stop();
+
+        assert!(!encoded.is_empty());
+    }
 }

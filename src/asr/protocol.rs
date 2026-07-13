@@ -32,6 +32,9 @@ pub struct AsrResponse {
     pub session_finished: bool,
     pub vad_start: bool,
     pub vad_finished: bool,
+    pub stream_asr_finished: bool,
+    pub nonstream_result: bool,
+    pub is_offline_result: bool,
     pub packet_number: i32,
     pub error_msg: String,
     pub raw_json: Option<Value>,
@@ -46,6 +49,9 @@ impl Default for AsrResponse {
             session_finished: false,
             vad_start: false,
             vad_finished: false,
+            stream_asr_finished: false,
+            nonstream_result: false,
+            is_offline_result: false,
             packet_number: -1,
             error_msg: String::new(),
             raw_json: None,
@@ -76,11 +82,13 @@ pub struct SessionExtra {
     pub did: String,
     pub enable_asr_threepass: bool,
     pub enable_asr_twopass: bool,
+    pub use_twopass_retry: bool,
+    pub end_smooth_window_ms: u32,
     pub input_mode: String,
 }
 
 impl SessionConfig {
-    pub fn new(device_id: &str, audio_quality: AudioQuality) -> Self {
+    pub fn new(device_id: &str, audio_quality: AudioQuality, end_smooth_window_ms: u32) -> Self {
         Self {
             audio_info: AudioInfo {
                 channel: audio_quality.channels(),
@@ -95,6 +103,8 @@ impl SessionConfig {
                 did: device_id.to_string(),
                 enable_asr_threepass: true,
                 enable_asr_twopass: true,
+                use_twopass_retry: true,
+                end_smooth_window_ms: end_smooth_window_ms.min(3_000),
                 input_mode: "tool".to_string(),
             },
         }
@@ -109,14 +119,24 @@ mod session_config_tests {
     #[test]
     fn session_audio_info_matches_selected_quality() {
         let standard =
-            serde_json::to_value(SessionConfig::new("device", AudioQuality::Standard)).unwrap();
-        let high =
-            serde_json::to_value(SessionConfig::new("device", AudioQuality::HighQuality)).unwrap();
+            serde_json::to_value(SessionConfig::new("device", AudioQuality::Standard, 800))
+                .unwrap();
+        let high = serde_json::to_value(SessionConfig::new(
+            "device",
+            AudioQuality::HighQuality,
+            1_200,
+        ))
+        .unwrap();
 
         assert_eq!(standard["audio_info"]["sample_rate"], 16_000);
         assert_eq!(high["audio_info"]["sample_rate"], 24_000);
         assert_eq!(standard["audio_info"]["channel"], 1);
         assert_eq!(high["audio_info"]["format"], "speech_opus");
+        assert_eq!(standard["extra"]["enable_asr_twopass"], true);
+        assert_eq!(standard["extra"]["enable_asr_threepass"], true);
+        assert_eq!(standard["extra"]["use_twopass_retry"], true);
+        assert_eq!(standard["extra"]["end_smooth_window_ms"], 800);
+        assert_eq!(high["extra"]["end_smooth_window_ms"], 1_200);
     }
 }
 
@@ -201,7 +221,6 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
     };
 
     let message_type = &pb.message_type;
-    let session_finished = message_type == "SessionFinished";
     let result_json = &pb.result_json;
     let status_message = &pb.status_message;
 
@@ -219,16 +238,16 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
                 ..Default::default()
             };
         }
-        "SessionFinished" if result_json.is_empty() => {
+        // Recognition revisions are delivered by the result callback. These
+        // messages only close the server-side lifecycle, even if a server
+        // variant happens to attach diagnostic JSON.
+        "ASR_Finished" | "SessionFinished" => {
             return AsrResponse {
                 response_type: ResponseType::SessionFinished,
                 session_finished: true,
                 ..Default::default()
             };
         }
-        // Some server versions attach the final recognition result to the
-        // SessionFinished message. Parse that payload before ending locally.
-        "SessionFinished" => {}
         "TaskFailed" | "SessionFailed" => {
             return AsrResponse {
                 response_type: ResponseType::Error,
@@ -260,15 +279,6 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
     let results = json_data.get("results");
     let extra = json_data.get("extra").cloned().unwrap_or(Value::Null);
 
-    if results.is_none() && session_finished {
-        return AsrResponse {
-            response_type: ResponseType::SessionFinished,
-            session_finished: true,
-            raw_json: Some(json_data),
-            ..Default::default()
-        };
-    }
-
     // No results - might be heartbeat
     if results.is_none() {
         let packet_number = extra
@@ -299,40 +309,39 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
 
     // Parse recognition results
     let results = results.unwrap();
-    let mut text = String::new();
-    let mut is_interim = true;
-    let mut vad_finished = false;
-    let mut nonstream_result = false;
-
-    if let Some(results_array) = results.as_array() {
-        for r in results_array {
-            if let Some(t) = r.get("text").and_then(|v| v.as_str()) {
-                text = t.to_string();
-            }
-            if r.get("is_interim").and_then(|v| v.as_bool()) == Some(false) {
-                is_interim = false;
-            }
-            if r.get("is_vad_finished").and_then(|v| v.as_bool()) == Some(true) {
-                vad_finished = true;
-            }
-            if r.get("extra")
-                .and_then(|e| e.get("nonstream_result"))
-                .and_then(|v| v.as_bool())
-                == Some(true)
-            {
-                nonstream_result = true;
-            }
-        }
-    }
+    // The native callback consumes results[0] as the complete replacement for
+    // the current, not-yet-committed segment.
+    let result = results.as_array().and_then(|items| items.first());
+    let text = result
+        .and_then(|r| r.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let result_flag = |name: &str| {
+        result
+            .and_then(|r| {
+                r.get(name)
+                    .or_else(|| r.get("extra").and_then(|extra| extra.get(name)))
+            })
+            .or_else(|| extra.get(name))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    let vad_finished = result_flag("is_vad_finished");
+    let stream_asr_finished = result_flag("stream_asr_finish");
+    let nonstream_result = result_flag("nonstream_result");
+    let is_offline_result = result_flag("is_offline_result");
 
     // Determine response type
-    if session_finished || nonstream_result || (!is_interim && vad_finished) {
+    if vad_finished {
         AsrResponse {
             response_type: ResponseType::FinalResult,
             text,
             is_final: true,
-            session_finished,
             vad_finished,
+            stream_asr_finished,
+            nonstream_result,
+            is_offline_result,
             raw_json: Some(json_data),
             ..Default::default()
         }
@@ -341,6 +350,9 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
             response_type: ResponseType::InterimResult,
             text,
             is_final: false,
+            stream_asr_finished,
+            nonstream_result,
+            is_offline_result,
             raw_json: Some(json_data),
             ..Default::default()
         }
@@ -369,15 +381,22 @@ mod response_tests {
     }
 
     #[test]
-    fn session_finished_with_text_is_final_and_terminal() {
+    fn session_finished_with_text_is_only_terminal() {
         let response = parse_response(&encoded_response(
             "SessionFinished",
             r#"{"results":[{"text":"最终修正","is_interim":true}]}"#,
         ));
-        assert_eq!(response.response_type, ResponseType::FinalResult);
-        assert_eq!(response.text, "最终修正");
-        assert!(response.is_final);
+        assert_eq!(response.response_type, ResponseType::SessionFinished);
+        assert!(response.text.is_empty());
         assert!(response.session_finished);
+    }
+
+    #[test]
+    fn asr_finished_is_only_terminal() {
+        let response = parse_response(&encoded_response("ASR_Finished", "{}"));
+        assert_eq!(response.response_type, ResponseType::SessionFinished);
+        assert!(response.session_finished);
+        assert!(response.text.is_empty());
     }
 
     #[test]
@@ -388,5 +407,40 @@ mod response_tests {
         ));
         assert_eq!(response.response_type, ResponseType::FinalResult);
         assert!(!response.session_finished);
+    }
+
+    #[test]
+    fn nonstream_revision_does_not_commit_a_segment() {
+        let response = parse_response(&encoded_response(
+            "TaskResult",
+            r#"{"results":[{"text":"OpenClaw","is_interim":false,"extra":{"nonstream_result":true}}]}"#,
+        ));
+        assert_eq!(response.response_type, ResponseType::InterimResult);
+        assert_eq!(response.text, "OpenClaw");
+        assert!(!response.is_final);
+        assert!(response.nonstream_result);
+    }
+
+    #[test]
+    fn stream_finish_is_distinct_from_segment_finish() {
+        let response = parse_response(&encoded_response(
+            "TaskResult",
+            r#"{"results":[{"text":"修订中","stream_asr_finish":true,"is_vad_finished":false}]}"#,
+        ));
+        assert_eq!(response.response_type, ResponseType::InterimResult);
+        assert!(response.stream_asr_finished);
+        assert!(!response.vad_finished);
+    }
+
+    #[test]
+    fn vad_finished_commits_even_when_interim_flag_is_present() {
+        let response = parse_response(&encoded_response(
+            "TaskResult",
+            r#"{"results":[{"text":"固化分段","is_interim":true,"is_vad_finished":true,"is_offline_result":true}]}"#,
+        ));
+        assert_eq!(response.response_type, ResponseType::FinalResult);
+        assert!(response.is_final);
+        assert!(response.vad_finished);
+        assert!(response.is_offline_result);
     }
 }
