@@ -368,12 +368,12 @@ fn spawn_polish(
             Ok(result) => {
                 if result.content.trim().is_empty() {
                     tracing::warn!(
-                        "Automatic filler cleanup returned empty text; keeping ASR text"
+                        "Automatic speech correction returned empty text; keeping ASR text"
                     );
                     return;
                 }
                 if result.content == record.text {
-                    tracing::debug!("Automatic filler cleanup did not change the ASR text");
+                    tracing::debug!("Automatic speech correction did not change the ASR text");
                     return;
                 }
 
@@ -391,7 +391,7 @@ fn spawn_polish(
 
                 match replace_result {
                     Ok(Some(Ok(()))) => {
-                        tracing::info!("Automatically replaced ASR text after filler cleanup")
+                        tracing::info!("Automatically replaced ASR text after speech correction")
                     }
                     Ok(Some(Err(error))) => {
                         tracing::warn!("Could not automatically replace ASR text: {}", error)

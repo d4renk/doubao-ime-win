@@ -734,7 +734,7 @@ mod windows_settings {
                     set_checked(state.ner_enabled_check, state.config.cloud.ner_enabled);
                     state.auto_polish_enabled_check = create_control(
                         w!("BUTTON"),
-                        w!("10 秒流式去口水词 / Filler cleanup"),
+                        w!("10 秒流式语音校正 / Voice correction"),
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_AUTOCHECKBOX as u32,
                         ),
