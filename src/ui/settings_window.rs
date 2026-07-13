@@ -1,7 +1,7 @@
 //! Native user settings window.
 
 use crate::business::HotkeyManager;
-use crate::data::AppConfig;
+use crate::data::{AppConfig, AudioQuality, PunctuationMode};
 
 /// Open the user settings window.
 pub fn show_settings(config: AppConfig, manager: HotkeyManager) {
@@ -38,6 +38,8 @@ mod windows_settings {
     const ID_AUTO_START: usize = 108;
     const ID_FLOATING: usize = 109;
     const ID_VAD: usize = 110;
+    const ID_AUDIO_QUALITY: usize = 111;
+    const ID_PUNCTUATION: usize = 112;
     const ID_TIMER: usize = 1;
 
     struct DialogState {
@@ -51,6 +53,8 @@ mod windows_settings {
         auto_start_check: HWND,
         floating_check: HWND,
         vad_check: HWND,
+        audio_quality_combo: HWND,
+        punctuation_combo: HWND,
         capture_rx: Option<Receiver<anyhow::Result<crate::business::RawKeyBinding>>>,
     }
 
@@ -87,6 +91,8 @@ mod windows_settings {
                 auto_start_check: HWND::default(),
                 floating_check: HWND::default(),
                 vad_check: HWND::default(),
+                audio_quality_combo: HWND::default(),
+                punctuation_combo: HWND::default(),
                 capture_rx: None,
             });
         });
@@ -195,6 +201,56 @@ mod windows_settings {
 
     unsafe fn is_checked(hwnd: HWND) -> bool {
         SendMessageW(hwnd, BM_GETCHECK, WPARAM(0), LPARAM(0)).0 == BST_CHECKED.0 as isize
+    }
+
+    unsafe fn add_combo_item(hwnd: HWND, value: &str) {
+        let value = wide(value);
+        let _ = SendMessageW(
+            hwnd,
+            CB_ADDSTRING,
+            WPARAM(0),
+            LPARAM(value.as_ptr() as isize),
+        );
+    }
+
+    unsafe fn set_combo_selection(hwnd: HWND, index: usize) {
+        let _ = SendMessageW(hwnd, CB_SETCURSEL, WPARAM(index), LPARAM(0));
+    }
+
+    unsafe fn combo_selection(hwnd: HWND) -> usize {
+        SendMessageW(hwnd, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 as usize
+    }
+
+    fn audio_quality_index(quality: AudioQuality) -> usize {
+        match quality {
+            AudioQuality::Standard => 0,
+            AudioQuality::HighQuality => 1,
+        }
+    }
+
+    fn audio_quality_from_index(index: usize) -> AudioQuality {
+        match index {
+            1 => AudioQuality::HighQuality,
+            _ => AudioQuality::Standard,
+        }
+    }
+
+    fn punctuation_index(mode: PunctuationMode) -> usize {
+        match mode {
+            PunctuationMode::Smart => 0,
+            PunctuationMode::Spaces => 1,
+            PunctuationMode::NoSentenceFinal => 2,
+            PunctuationMode::Preserve => 3,
+        }
+    }
+
+    fn punctuation_from_index(index: usize) -> PunctuationMode {
+        match index {
+            1 => PunctuationMode::Spaces,
+            2 => PunctuationMode::NoSentenceFinal,
+            3 => PunctuationMode::Preserve,
+            _ => PunctuationMode::Smart,
+        }
     }
 
     unsafe extern "system" fn window_proc(
@@ -429,6 +485,92 @@ mod windows_settings {
                         instance,
                     );
                     create_control(
+                        w!("STATIC"),
+                        w!("语音识别 / Speech Recognition"),
+                        WS_CHILD | WS_VISIBLE,
+                        20,
+                        345,
+                        500,
+                        24,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    create_control(
+                        w!("STATIC"),
+                        w!("采集音质："),
+                        WS_CHILD | WS_VISIBLE,
+                        20,
+                        380,
+                        110,
+                        24,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.audio_quality_combo = create_control(
+                        w!("COMBOBOX"),
+                        w!(""),
+                        WINDOW_STYLE(
+                            WS_CHILD.0
+                                | WS_VISIBLE.0
+                                | WS_TABSTOP.0
+                                | WS_VSCROLL.0
+                                | CBS_DROPDOWNLIST as u32,
+                        ),
+                        135,
+                        375,
+                        300,
+                        140,
+                        hwnd,
+                        ID_AUDIO_QUALITY,
+                        instance,
+                    );
+                    add_combo_item(state.audio_quality_combo, "标准识别（16 kHz 单声道）");
+                    add_combo_item(state.audio_quality_combo, "高清识别（24 kHz 单声道）");
+                    set_combo_selection(
+                        state.audio_quality_combo,
+                        audio_quality_index(state.config.asr.audio_quality),
+                    );
+                    create_control(
+                        w!("STATIC"),
+                        w!("标点展示："),
+                        WS_CHILD | WS_VISIBLE,
+                        20,
+                        425,
+                        110,
+                        24,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.punctuation_combo = create_control(
+                        w!("COMBOBOX"),
+                        w!(""),
+                        WINDOW_STYLE(
+                            WS_CHILD.0
+                                | WS_VISIBLE.0
+                                | WS_TABSTOP.0
+                                | WS_VSCROLL.0
+                                | CBS_DROPDOWNLIST as u32,
+                        ),
+                        135,
+                        420,
+                        300,
+                        180,
+                        hwnd,
+                        ID_PUNCTUATION,
+                        instance,
+                    );
+                    add_combo_item(state.punctuation_combo, "智能添加标点");
+                    add_combo_item(state.punctuation_combo, "空格代替标点");
+                    add_combo_item(state.punctuation_combo, "句末不添加标点");
+                    add_combo_item(state.punctuation_combo, "保留所有标点");
+                    set_combo_selection(
+                        state.punctuation_combo,
+                        punctuation_index(state.config.asr.punctuation_mode),
+                    );
+                    create_control(
                         w!("BUTTON"),
                         w!("保存"),
                         WINDOW_STYLE(
@@ -501,6 +643,11 @@ mod windows_settings {
                             state.config.general.auto_start = is_checked(state.auto_start_check);
                             state.config.floating_button.enabled = is_checked(state.floating_check);
                             state.config.asr.vad_enabled = is_checked(state.vad_check);
+                            state.config.asr.audio_quality = audio_quality_from_index(
+                                combo_selection(state.audio_quality_combo),
+                            );
+                            state.config.asr.punctuation_mode =
+                                punctuation_from_index(combo_selection(state.punctuation_combo));
                             state.config.hotkey.combo_key = get_text(state.combo_edit);
                             if let Err(error) = state.manager.reconfigure(&state.config.hotkey) {
                                 let message = wide(&format!("快捷键设置无效：{}", error));
@@ -574,6 +721,37 @@ mod windows_settings {
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, message, wparam, _lparam),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{
+            audio_quality_from_index, audio_quality_index, punctuation_from_index,
+            punctuation_index,
+        };
+        use crate::data::{AudioQuality, PunctuationMode};
+
+        #[test]
+        fn audio_quality_combo_mapping_round_trips() {
+            for quality in [AudioQuality::Standard, AudioQuality::HighQuality] {
+                assert_eq!(
+                    audio_quality_from_index(audio_quality_index(quality)),
+                    quality
+                );
+            }
+        }
+
+        #[test]
+        fn punctuation_combo_mapping_round_trips() {
+            for mode in [
+                PunctuationMode::Smart,
+                PunctuationMode::Spaces,
+                PunctuationMode::NoSentenceFinal,
+                PunctuationMode::Preserve,
+            ] {
+                assert_eq!(punctuation_from_index(punctuation_index(mode)), mode);
+            }
         }
     }
 }

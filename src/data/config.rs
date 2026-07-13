@@ -199,10 +199,85 @@ impl Default for FloatingButtonConfig {
 pub struct AsrConfig {
     #[serde(default = "default_true")]
     pub vad_enabled: bool,
+    #[serde(default)]
+    pub audio_quality: AudioQuality,
+    #[serde(default)]
+    pub punctuation_mode: PunctuationMode,
 }
 
 impl Default for AsrConfig {
     fn default() -> Self {
-        Self { vad_enabled: true }
+        Self {
+            vad_enabled: true,
+            audio_quality: AudioQuality::default(),
+            punctuation_mode: PunctuationMode::default(),
+        }
+    }
+}
+
+/// Audio format sent to the ASR service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioQuality {
+    /// Official-compatible 16kHz mono Opus.
+    Standard,
+    /// Highest verified format: 24kHz mono Opus.
+    #[default]
+    HighQuality,
+}
+
+impl AudioQuality {
+    pub const fn sample_rate(self) -> u32 {
+        match self {
+            Self::Standard => 16_000,
+            Self::HighQuality => 24_000,
+        }
+    }
+
+    pub const fn channels(self) -> u16 {
+        1
+    }
+}
+
+/// Client-side punctuation display behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PunctuationMode {
+    #[default]
+    Smart,
+    Spaces,
+    NoSentenceFinal,
+    Preserve,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppConfig, AudioQuality, PunctuationMode};
+
+    #[test]
+    fn legacy_config_uses_new_asr_defaults() {
+        let config: AppConfig = toml::from_str(
+            r#"
+                [asr]
+                vad_enabled = true
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.asr.audio_quality, AudioQuality::HighQuality);
+        assert_eq!(config.asr.punctuation_mode, PunctuationMode::Smart);
+    }
+
+    #[test]
+    fn asr_options_round_trip() {
+        let mut config = AppConfig::default();
+        config.asr.audio_quality = AudioQuality::Standard;
+        config.asr.punctuation_mode = PunctuationMode::Preserve;
+
+        let serialized = toml::to_string(&config).unwrap();
+        let restored: AppConfig = toml::from_str(&serialized).unwrap();
+
+        assert_eq!(restored.asr.audio_quality, AudioQuality::Standard);
+        assert_eq!(restored.asr.punctuation_mode, PunctuationMode::Preserve);
     }
 }

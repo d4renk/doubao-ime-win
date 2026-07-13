@@ -35,3 +35,7 @@ position_y = 100
 [asr]
 # 是否启用 VAD (语音活动检测)
 vad_enabled = true
+# 音质: "standard" (16kHz) 或 "high_quality" (24kHz)
+audio_quality = "high_quality"
+# 标点: "smart", "spaces", "no_sentence_final", "preserve"
+punctuation_mode = "smart"

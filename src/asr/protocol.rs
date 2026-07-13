@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::proto::{AsrRequest, AsrResponse as AsrResponseProto, FrameState};
+use crate::data::AudioQuality;
 
 /// Response types from ASR server
 #[derive(Debug, Clone, PartialEq)]
@@ -77,12 +78,12 @@ pub struct SessionExtra {
 }
 
 impl SessionConfig {
-    pub fn new(device_id: &str) -> Self {
+    pub fn new(device_id: &str, audio_quality: AudioQuality) -> Self {
         Self {
             audio_info: AudioInfo {
-                channel: 1,
+                channel: audio_quality.channels(),
                 format: "speech_opus".to_string(),
-                sample_rate: 16000,
+                sample_rate: audio_quality.sample_rate(),
             },
             enable_punctuation: true,
             enable_speech_rejection: false,
@@ -95,6 +96,25 @@ impl SessionConfig {
                 input_mode: "tool".to_string(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod session_config_tests {
+    use super::SessionConfig;
+    use crate::data::AudioQuality;
+
+    #[test]
+    fn session_audio_info_matches_selected_quality() {
+        let standard =
+            serde_json::to_value(SessionConfig::new("device", AudioQuality::Standard)).unwrap();
+        let high =
+            serde_json::to_value(SessionConfig::new("device", AudioQuality::HighQuality)).unwrap();
+
+        assert_eq!(standard["audio_info"]["sample_rate"], 16_000);
+        assert_eq!(high["audio_info"]["sample_rate"], 24_000);
+        assert_eq!(standard["audio_info"]["channel"], 1);
+        assert_eq!(high["audio_info"]["format"], "speech_opus");
     }
 }
 

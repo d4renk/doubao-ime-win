@@ -3,6 +3,7 @@
 //! Contains the core business logic for voice input control.
 
 mod hotkey_manager;
+mod punctuation;
 mod text_inserter;
 mod voice_controller;
 

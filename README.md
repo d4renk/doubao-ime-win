@@ -88,6 +88,8 @@ position_y = 100
 
 [asr]
 vad_enabled = true
+audio_quality = "high_quality"  # "standard" (16kHz) 或 "high_quality" (24kHz)
+punctuation_mode = "smart"  # "smart", "spaces", "no_sentence_final", "preserve"
 ```
 
 ## 从源码构建

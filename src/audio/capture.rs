@@ -11,9 +11,9 @@ use tokio::sync::mpsc as tokio_mpsc;
 
 use super::encoder::OpusEncoder;
 use super::resampler::AudioResampler;
+use crate::data::AudioQuality;
 
-// Opus encoder always uses 16kHz mono
-const OPUS_SAMPLE_RATE: u32 = 16000;
+// The ASR service is verified with mono Opus at 16kHz and 24kHz.
 const OPUS_CHANNELS: u16 = 1;
 const FRAME_DURATION_MS: u32 = 20;
 
@@ -45,7 +45,7 @@ impl AudioCapture {
         self.is_recording.load(Ordering::SeqCst)
     }
 
-    pub fn start(&self) -> Result<tokio_mpsc::Receiver<Vec<u8>>> {
+    pub fn start(&self, audio_quality: AudioQuality) -> Result<tokio_mpsc::Receiver<Vec<u8>>> {
         if self.is_recording.swap(true, Ordering::SeqCst) {
             return Err(anyhow!("Already recording"));
         }
@@ -68,7 +68,7 @@ impl AudioCapture {
             let _ = std::io::stdout().flush();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_audio_capture(tokio_tx, is_recording.clone())
+                run_audio_capture(tokio_tx, is_recording.clone(), audio_quality)
             }));
 
             match result {
@@ -101,6 +101,7 @@ impl AudioCapture {
 fn run_audio_capture(
     tokio_tx: tokio_mpsc::Sender<Vec<u8>>,
     is_recording: Arc<AtomicBool>,
+    audio_quality: AudioQuality,
 ) -> Result<()> {
     let host = cpal::default_host();
     let device = host
@@ -129,10 +130,15 @@ fn run_audio_capture(
     let config = supported_config.config();
     println!("[AudioCapture] Using config: {:?}", config);
 
-    // Create Opus encoder (16kHz mono)
-    let mut encoder = match OpusEncoder::new(OPUS_SAMPLE_RATE, OPUS_CHANNELS) {
+    let opus_sample_rate = audio_quality.sample_rate();
+
+    // Create Opus encoder using the same profile declared to the ASR service.
+    let mut encoder = match OpusEncoder::new(opus_sample_rate, OPUS_CHANNELS) {
         Ok(enc) => {
-            println!("[AudioCapture] Opus encoder created (16kHz mono)");
+            println!(
+                "[AudioCapture] Opus encoder created ({}Hz mono)",
+                opus_sample_rate
+            );
             enc
         }
         Err(e) => {
@@ -144,7 +150,7 @@ fn run_audio_capture(
     // Calculate frame sizes
     let samples_per_frame_native =
         (native_sample_rate * FRAME_DURATION_MS / 1000) as usize * native_channels as usize;
-    let samples_per_frame_opus = (OPUS_SAMPLE_RATE * FRAME_DURATION_MS / 1000) as usize; // mono
+    let samples_per_frame_opus = (opus_sample_rate * FRAME_DURATION_MS / 1000) as usize; // mono
 
     println!(
         "[AudioCapture] Samples/frame: native={} ({}ch), opus={} (mono)",
@@ -219,7 +225,7 @@ fn run_audio_capture(
     let mono_samples_per_native_frame = samples_per_frame_native / native_channels_clone as usize;
     let mut resampler = AudioResampler::new(
         native_sample_rate,
-        OPUS_SAMPLE_RATE,
+        opus_sample_rate,
         mono_samples_per_native_frame,
         samples_per_frame_opus,
     )?;

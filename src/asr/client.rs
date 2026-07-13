@@ -16,6 +16,7 @@ use super::protocol::{
     build_finish_session, build_start_session, build_start_task, build_task_request,
     parse_response, AsrResponse, ResponseType, SessionConfig,
 };
+use crate::data::AudioQuality;
 
 /// ASR Client for real-time speech recognition
 pub struct AsrClient {
@@ -42,6 +43,7 @@ impl AsrClient {
     pub async fn start_realtime(
         &self,
         mut audio_rx: mpsc::Receiver<Vec<u8>>,
+        audio_quality: AudioQuality,
     ) -> Result<mpsc::Receiver<AsrResponse>> {
         let url = self.ws_url();
         let request_id = Uuid::new_v4().to_string();
@@ -92,7 +94,7 @@ impl AsrClient {
 
         // Send StartSession
         tracing::debug!("Sending StartSession");
-        let session_config = SessionConfig::new(&device_id);
+        let session_config = SessionConfig::new(&device_id, audio_quality);
         let start_session_msg = build_start_session(&request_id, &token, &session_config);
         write
             .send(Message::Binary(start_session_msg.into()))

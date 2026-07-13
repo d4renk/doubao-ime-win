@@ -140,4 +140,19 @@ mod tests {
             "12kHz signal was not sufficiently attenuated: passband={passband_rms}, stopband={stopband_rms}"
         );
     }
+
+    #[test]
+    fn supports_24khz_high_quality_frames() {
+        let mut resampler = AudioResampler::new(INPUT_RATE, 24_000, INPUT_FRAMES, 480).unwrap();
+        let input = vec![0.0; INPUT_FRAMES];
+        let mut emitted_frames = 0;
+
+        for _ in 0..10 {
+            for frame in resampler.process(&input).unwrap() {
+                assert_eq!(frame.len(), 480);
+                emitted_frames += 1;
+            }
+        }
+        assert!(emitted_frames > 0);
+    }
 }

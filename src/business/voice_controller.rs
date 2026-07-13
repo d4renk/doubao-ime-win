@@ -10,7 +10,9 @@ use tokio::task::JoinHandle;
 
 use crate::asr::{AsrClient, ResponseType};
 use crate::audio::AudioCapture;
+use crate::business::punctuation::{format_transcript, TranscriptBoundary};
 use crate::business::TextInserter;
+use crate::data::{AppConfig, PunctuationMode};
 
 const FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -70,16 +72,23 @@ impl VoiceController {
 
         tracing::info!("Starting voice input...");
         self.finish_requested.store(false, Ordering::SeqCst);
+        let asr_config = AppConfig::load_or_default()?.asr;
+        let audio_quality = asr_config.audio_quality;
+        let punctuation_mode = asr_config.punctuation_mode;
 
         // Start audio capture
         tracing::debug!("Starting audio capture...");
-        let audio_rx = self.audio_capture.start()?;
+        let audio_rx = self.audio_capture.start(audio_quality)?;
         self.is_recording.store(true, Ordering::SeqCst);
         tracing::info!("Audio capture started, frames will be sent to ASR");
 
         // Start ASR
         tracing::debug!("Connecting to ASR server...");
-        let mut result_rx = match self.asr_client.start_realtime(audio_rx).await {
+        let mut result_rx = match self
+            .asr_client
+            .start_realtime(audio_rx, audio_quality)
+            .await
+        {
             Ok(result_rx) => result_rx,
             Err(error) => {
                 self.audio_capture.stop();
@@ -100,6 +109,7 @@ impl VoiceController {
             let mut last_text = String::new();
             let mut response_count = 0u32;
             let mut completed_normally = false;
+            let mut pending_smart_comma = false;
 
             tracing::info!("ASR result processing task started");
 
@@ -110,21 +120,36 @@ impl VoiceController {
                         tracing::debug!("[INTERIM #{}] {}", response_count, response.text);
                         println!("📝 [识别中] {}", response.text);
                         if !response.text.is_empty() {
-                            if let Err(e) = update_text(&text_inserter, &last_text, &response.text)
+                            let displayed_text = format_transcript(
+                                &response.text,
+                                punctuation_mode,
+                                TranscriptBoundary::Interim,
+                            );
+                            if let Err(e) = update_text(&text_inserter, &last_text, &displayed_text)
                             {
                                 tracing::error!("Failed to update text: {}", e);
                             }
-                            last_text = response.text.clone();
+                            last_text = displayed_text;
                         }
                     }
                     ResponseType::FinalResult => {
                         tracing::info!("[FINAL #{}] {}", response_count, response.text);
                         println!("✅ [确认] {}", response.text);
                         if !response.text.is_empty() {
-                            if let Err(e) = update_text(&text_inserter, &last_text, &response.text)
+                            let boundary = if finish_requested.load(Ordering::SeqCst) {
+                                TranscriptBoundary::SessionFinal
+                            } else {
+                                TranscriptBoundary::ClauseFinal
+                            };
+                            let displayed_text =
+                                format_transcript(&response.text, punctuation_mode, boundary);
+                            if let Err(e) = update_text(&text_inserter, &last_text, &displayed_text)
                             {
                                 tracing::error!("Failed to update text: {}", e);
                             }
+                            pending_smart_comma = punctuation_mode == PunctuationMode::Smart
+                                && boundary == TranscriptBoundary::ClauseFinal
+                                && displayed_text.ends_with('，');
                             // A later sentence starts a new incremental text range.
                             last_text = String::new();
                         }
@@ -135,6 +160,25 @@ impl VoiceController {
                         }
                     }
                     ResponseType::SessionFinished => {
+                        if punctuation_mode == PunctuationMode::Smart {
+                            if !last_text.is_empty() {
+                                let final_text = format_transcript(
+                                    &last_text,
+                                    punctuation_mode,
+                                    TranscriptBoundary::SessionFinal,
+                                );
+                                if let Err(error) =
+                                    update_text(&text_inserter, &last_text, &final_text)
+                                {
+                                    tracing::error!("Failed to finalize punctuation: {}", error);
+                                }
+                                last_text.clear();
+                            } else if pending_smart_comma {
+                                if let Err(error) = replace_last_character(&text_inserter, "。") {
+                                    tracing::error!("Failed to finalize punctuation: {}", error);
+                                }
+                            }
+                        }
                         tracing::info!("ASR session finished (total {} responses)", response_count);
                         println!("🏁 [会话结束]");
                         completed_normally = true;
@@ -197,6 +241,11 @@ impl VoiceController {
         self.is_recording.store(false, Ordering::SeqCst);
         Ok(())
     }
+}
+
+fn replace_last_character(text_inserter: &TextInserter, replacement: &str) -> Result<()> {
+    text_inserter.delete_chars(1)?;
+    text_inserter.insert(replacement)
 }
 
 /// Update text in the focused window using incremental updates
