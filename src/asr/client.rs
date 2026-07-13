@@ -180,9 +180,11 @@ impl AsrClient {
             while let Some(Ok(msg)) = read.next().await {
                 if let Message::Binary(data) = msg {
                     let response = parse_response(&data);
+                    let session_finished = response.session_finished
+                        || response.response_type == ResponseType::SessionFinished;
 
                     match response.response_type {
-                        ResponseType::Error | ResponseType::SessionFinished => {
+                        ResponseType::Error => {
                             let _ = result_tx_clone.send(response).await;
                             break;
                         }
@@ -192,6 +194,9 @@ impl AsrClient {
                         }
                         _ => {
                             if result_tx_clone.send(response).await.is_err() {
+                                break;
+                            }
+                            if session_finished {
                                 break;
                             }
                         }

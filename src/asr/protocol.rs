@@ -29,6 +29,7 @@ pub struct AsrResponse {
     pub response_type: ResponseType,
     pub text: String,
     pub is_final: bool,
+    pub session_finished: bool,
     pub vad_start: bool,
     pub vad_finished: bool,
     pub packet_number: i32,
@@ -42,6 +43,7 @@ impl Default for AsrResponse {
             response_type: ResponseType::Unknown,
             text: String::new(),
             is_final: false,
+            session_finished: false,
             vad_start: false,
             vad_finished: false,
             packet_number: -1,
@@ -199,6 +201,7 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
     };
 
     let message_type = &pb.message_type;
+    let session_finished = message_type == "SessionFinished";
     let result_json = &pb.result_json;
     let status_message = &pb.status_message;
 
@@ -219,6 +222,7 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
         "SessionFinished" if result_json.is_empty() => {
             return AsrResponse {
                 response_type: ResponseType::SessionFinished,
+                session_finished: true,
                 ..Default::default()
             };
         }
@@ -255,6 +259,15 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
 
     let results = json_data.get("results");
     let extra = json_data.get("extra").cloned().unwrap_or(Value::Null);
+
+    if results.is_none() && session_finished {
+        return AsrResponse {
+            response_type: ResponseType::SessionFinished,
+            session_finished: true,
+            raw_json: Some(json_data),
+            ..Default::default()
+        };
+    }
 
     // No results - might be heartbeat
     if results.is_none() {
@@ -313,11 +326,12 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
     }
 
     // Determine response type
-    if nonstream_result || (!is_interim && vad_finished) {
+    if session_finished || nonstream_result || (!is_interim && vad_finished) {
         AsrResponse {
             response_type: ResponseType::FinalResult,
             text,
             is_final: true,
+            session_finished,
             vad_finished,
             raw_json: Some(json_data),
             ..Default::default()
@@ -330,5 +344,49 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
             raw_json: Some(json_data),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+    use crate::asr::proto::AsrResponse as AsrResponseProto;
+
+    fn encoded_response(message_type: &str, result_json: &str) -> Vec<u8> {
+        AsrResponseProto {
+            message_type: message_type.into(),
+            result_json: result_json.into(),
+            ..Default::default()
+        }
+        .encode_to_vec()
+    }
+
+    #[test]
+    fn empty_session_finished_is_terminal() {
+        let response = parse_response(&encoded_response("SessionFinished", ""));
+        assert_eq!(response.response_type, ResponseType::SessionFinished);
+        assert!(response.session_finished);
+    }
+
+    #[test]
+    fn session_finished_with_text_is_final_and_terminal() {
+        let response = parse_response(&encoded_response(
+            "SessionFinished",
+            r#"{"results":[{"text":"最终修正","is_interim":true}]}"#,
+        ));
+        assert_eq!(response.response_type, ResponseType::FinalResult);
+        assert_eq!(response.text, "最终修正");
+        assert!(response.is_final);
+        assert!(response.session_finished);
+    }
+
+    #[test]
+    fn ordinary_final_result_is_not_session_terminal() {
+        let response = parse_response(&encoded_response(
+            "TaskResult",
+            r#"{"results":[{"text":"分句结果","is_interim":false,"is_vad_finished":true}]}"#,
+        ));
+        assert_eq!(response.response_type, ResponseType::FinalResult);
+        assert!(!response.session_finished);
     }
 }

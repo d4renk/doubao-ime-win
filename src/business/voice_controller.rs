@@ -17,7 +17,7 @@ use crate::business::{
 use crate::cloud::{NerClient, NerLexicon, RichChatClient, RichChatInput};
 use crate::data::{AppConfig, PunctuationMode};
 
-const ASR_FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(2);
+const ASR_SESSION_FINISH_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 struct CloudRuntime {
@@ -220,8 +220,10 @@ impl VoiceController {
                                 }
                             }
                         }
-                        if finish_requested.load(Ordering::SeqCst) {
-                            tracing::info!("Final ASR result received while stopping");
+                        if response.session_finished {
+                            tracing::info!(
+                                "ASR SessionFinished received with the final recognition result"
+                            );
                             completed_normally = true;
                             break;
                         }
@@ -302,18 +304,18 @@ impl VoiceController {
         Ok(())
     }
 
-    /// Stop capturing audio and drain the server's final recognition result.
+    /// Stop capturing audio and drain responses through the server's SessionFinished event.
     pub async fn stop(&mut self) -> Result<()> {
         if !self.is_recording() {
             return Ok(());
         }
 
-        tracing::info!("Stopping voice input and waiting for the final ASR result...");
+        tracing::info!("Stopping voice input and waiting for ASR SessionFinished...");
         self.finish_requested.store(true, Ordering::SeqCst);
         self.audio_capture.stop();
 
         if let Some(mut result_task) = self.result_task.take() {
-            match tokio::time::timeout(ASR_FINAL_RESULT_TIMEOUT, &mut result_task).await {
+            match tokio::time::timeout(ASR_SESSION_FINISH_TIMEOUT, &mut result_task).await {
                 Ok(Ok(())) => {
                     tracing::info!("Final ASR result processing completed");
                 }
@@ -322,8 +324,8 @@ impl VoiceController {
                 }
                 Err(_) => {
                     tracing::warn!(
-                        "Timed out after {:?} waiting for the final ASR result",
-                        ASR_FINAL_RESULT_TIMEOUT
+                        "Timed out after {:?} waiting for ASR SessionFinished",
+                        ASR_SESSION_FINISH_TIMEOUT
                     );
                     result_task.abort();
                     let _ = result_task.await;
