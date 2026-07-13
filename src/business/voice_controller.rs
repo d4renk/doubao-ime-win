@@ -17,7 +17,7 @@ use crate::business::{
 use crate::cloud::{NerClient, NerLexicon, RichChatClient, RichChatInput};
 use crate::data::{AppConfig, PunctuationMode};
 
-const ASR_SESSION_FINISH_TIMEOUT: Duration = Duration::from_secs(2);
+const ASR_SESSION_FINISH_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 struct CloudRuntime {
