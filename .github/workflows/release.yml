@@ -44,6 +44,10 @@ jobs:
         with:
           ref: refs/tags/${{ steps.release_tag.outputs.tag }}
 
+      - name: Verify repository allowlist
+        shell: pwsh
+        run: ./scripts/check-repository-allowlist.ps1
+
       - name: Install pinned Rust toolchain
         shell: pwsh
         run: rustup toolchain install 1.97.0 --profile minimal --target x86_64-pc-windows-msvc

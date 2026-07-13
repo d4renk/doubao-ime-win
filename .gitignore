@@ -1,28 +1,71 @@
-# Generated files
-/target/
-/dist/
+# Repository allowlist
+# Ignore every file by default while keeping directories traversable.
+*
+!*/
 
-# Cargo lock (optional for applications)
-# Cargo.lock
+# Root project files
+!/.gitignore
+!/Cargo.lock
+!/Cargo.toml
+!/README.md
+!/SECURITY.md
+!/build.rs
+!/config.toml
+!/config.toml.example
+!/rust-toolchain.toml
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
+# Checked-in source assets and maintenance tools
+!/Gemini_Generated_Image_nse4abnse4abnse4.png
+!/crop_icons.py
+!/make_circular.py
+!/process_icons.py
+!/resize_icons.py
+!/split_icons.py
+!/protoc-33.4-win64.zip
 
-# Build artifacts
-*.exe
-*.dll
-*.pdb
+# Owned repository trees
+!/.github/**/*.yml
+!/.github/**/*.yaml
+!/PRD/**/*.md
+!/assets/*.png
+!/examples/*.rs
+!/proto/*.proto
+!/scripts/*.ps1
+!/src/**/*.rs
+!/tools/protoc/include/**/*.proto
+!/tools/protoc/readme.txt
 
-# Configuration with secrets
-credentials.json
+# Security and machine-local deny rules always win.
+**/.env
+**/.env.*
+**/credentials.json
+**/*credentials*.json
+**/*.pem
+**/*.key
+**/*.pfx
+**/*.p12
+**/config.local.toml
+**/config.*.local.toml
 
-# OS files
-.DS_Store
-Thumbs.db
+# Generated output, diagnostics, and local backups
+**/target/**
+**/dist/**
+**/logs/**
+**/*.log
+**/*.dmp
+**/*.stackdump
+**/*.bak
+**/*.bak-*
+**/*.orig
+**/*~
+**/*.exe
+**/*.dll
+**/*.pdb
 
-# Logs
-*.log
-logs/
+# Editor and operating-system metadata
+**/.idea/**
+**/.vscode/**
+**/*.swp
+**/*.swo
+**/.DS_Store
+**/Thumbs.db
