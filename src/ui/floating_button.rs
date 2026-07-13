@@ -3,7 +3,7 @@
 //! A floating button that shows the voice input status and allows user to trigger recording.
 //! Uses Win32 API with timer-based drag tracking for smooth operation.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
@@ -26,6 +26,12 @@ impl From<u8> for ButtonState {
             2 => ButtonState::Processing,
             _ => ButtonState::Idle,
         }
+    }
+}
+
+impl ButtonState {
+    fn shows_floating_button(self) -> bool {
+        !matches!(self, Self::Idle)
     }
 }
 
@@ -60,7 +66,7 @@ impl Default for FloatingButtonConfig {
 #[derive(Clone)]
 pub struct FloatingButtonStateSetter {
     state: Arc<AtomicU8>,
-    hwnd: Arc<AtomicI32>,
+    hwnd: Arc<AtomicIsize>,
 }
 
 impl FloatingButtonStateSetter {
@@ -75,8 +81,17 @@ impl FloatingButtonStateSetter {
                 unsafe {
                     use windows::Win32::Foundation::*;
                     use windows::Win32::Graphics::Gdi::InvalidateRect;
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        ShowWindow, SW_HIDE, SW_SHOWNOACTIVATE,
+                    };
                     let hwnd = HWND(hwnd_val as isize);
                     let _ = InvalidateRect(hwnd, None, TRUE);
+                    let command = if state.shows_floating_button() {
+                        SW_SHOWNOACTIVATE
+                    } else {
+                        SW_HIDE
+                    };
+                    let _ = ShowWindow(hwnd, command);
                 }
             }
         }
@@ -92,7 +107,7 @@ impl FloatingButtonStateSetter {
 /// Floating button manager
 pub struct FloatingButton {
     state: Arc<AtomicU8>,
-    hwnd: Arc<AtomicI32>,
+    hwnd: Arc<AtomicIsize>,
     event_tx: Sender<FloatingButtonEvent>,
     event_rx: Option<Receiver<FloatingButtonEvent>>,
 }
@@ -103,7 +118,7 @@ impl FloatingButton {
         let (event_tx, event_rx) = channel();
         Self {
             state: Arc::new(AtomicU8::new(ButtonState::Idle as u8)),
-            hwnd: Arc::new(AtomicI32::new(0)),
+            hwnd: Arc::new(AtomicIsize::new(0)),
             event_tx,
             event_rx: Some(event_rx),
         }
@@ -151,7 +166,7 @@ impl FloatingButton {
         let event_tx = self.event_tx.clone();
         let window_size = config.size;
 
-        SHARED_STATE.with(|s| *s.borrow_mut() = Some(state));
+        SHARED_STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
         EVENT_SENDER.with(|s| *s.borrow_mut() = Some(event_tx));
 
         // Helper function to update layered window with PNG icon
@@ -433,7 +448,7 @@ impl FloatingButton {
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
                 cls,
                 w!("豆包语音"),
-                WS_POPUP | WS_VISIBLE,
+                WS_POPUP,
                 config.initial_x,
                 config.initial_y,
                 window_size,
@@ -449,10 +464,12 @@ impl FloatingButton {
                 return;
             }
 
-            hwnd_store.store(hwnd.0 as i32, Ordering::SeqCst);
+            hwnd_store.store(hwnd.0, Ordering::SeqCst);
             tracing::info!("Floating button window created");
 
-            let _ = ShowWindow(hwnd, SW_SHOW);
+            if ButtonState::from(state.load(Ordering::SeqCst)).shows_floating_button() {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
 
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
@@ -470,5 +487,17 @@ impl FloatingButton {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ButtonState;
+
+    #[test]
+    fn floating_button_is_only_visible_while_voice_input_is_active() {
+        assert!(!ButtonState::Idle.shows_floating_button());
+        assert!(ButtonState::Recording.shows_floating_button());
+        assert!(ButtonState::Processing.shows_floating_button());
     }
 }
