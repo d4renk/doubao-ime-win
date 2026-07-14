@@ -1016,9 +1016,9 @@ mod windows_settings {
                             set_text(state.status_label, "请在 10 秒内按下要绑定的按键...");
                             let (sender, receiver) = mpsc::channel();
                             state.capture_rx = Some(receiver);
+                            let manager = state.manager.clone();
                             thread::spawn(move || {
-                                let result =
-                                    HotkeyManager::capture_raw_key(Duration::from_secs(10));
+                                let result = manager.capture_raw_key(Duration::from_secs(10));
                                 let _ = sender.send(result);
                             });
                         }

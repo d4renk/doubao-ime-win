@@ -55,10 +55,13 @@ enum IpcCommand {
     GetConfig,
     SaveConfig(AppConfig),
     CaptureRawKey,
+    OpenLogs,
     ShowSettings,
     GetVoiceState,
     StartRecording,
     StopRecording,
+    DragSettings,
+    HideSettings,
     DragHud,
 }
 
@@ -73,9 +76,11 @@ pub fn run_app(
     let proxy = event_loop.create_proxy();
     let settings_window = WindowBuilder::new()
         .with_title("豆包语音输入 - 设置")
+        .with_decorations(false)
         .with_inner_size(LogicalSize::new(1120.0, 820.0))
         .with_min_inner_size(LogicalSize::new(760.0, 640.0))
         .build(&event_loop)?;
+    set_settings_immersive_theme(&settings_window);
     let hud_window = WindowBuilder::new()
         .with_title("豆包语音输入")
         .with_decorations(false)
@@ -111,15 +116,18 @@ pub fn run_app(
     let start_item = MenuItem::new("开始语音输入", true, None);
     let stop_item = MenuItem::new("停止语音输入", true, None);
     let settings_item = MenuItem::new("设置...", true, None);
+    let logs_item = MenuItem::new("打开日志文件夹", true, None);
     let quit_item = MenuItem::new("退出", true, None);
     let start_id = start_item.id().clone();
     let stop_id = stop_item.id().clone();
     let settings_id = settings_item.id().clone();
+    let logs_id = logs_item.id().clone();
     let quit_id = quit_item.id().clone();
     menu.append(&start_item)?;
     menu.append(&stop_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&settings_item)?;
+    menu.append(&logs_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&quit_item)?;
     let _tray = TrayIconBuilder::new()
@@ -166,6 +174,11 @@ pub fn run_app(
                     if menu_event.id == start_id { let _ = proxy.send_event(UserEvent::Start); }
                     else if menu_event.id == stop_id { let _ = proxy.send_event(UserEvent::Stop); }
                     else if menu_event.id == settings_id { settings_window.set_visible(true); }
+                    else if menu_event.id == logs_id {
+                        if let Err(error) = open_logs_directory() {
+                            tracing::error!("Unable to open log directory: {error:#}");
+                        }
+                    }
                     else if menu_event.id == quit_id { *control_flow = ControlFlow::Exit; }
                 }
                 if matches!(state, VoiceState::Recording) && last_meter_at.elapsed() >= Duration::from_millis(33) {
@@ -219,11 +232,18 @@ fn handle_ipc(
         }
         IpcCommand::CaptureRawKey => {
             let proxy = proxy.clone();
+            let hotkeys = hotkeys.clone();
             std::thread::spawn(move || {
-                let result = HotkeyManager::capture_raw_key(Duration::from_secs(10))
+                let result = hotkeys
+                    .capture_raw_key(Duration::from_secs(10))
                     .map_err(|error| error.to_string());
                 let _ = proxy.send_event(UserEvent::CaptureResult(result));
             });
+        }
+        IpcCommand::OpenLogs => {
+            if let Err(error) = open_logs_directory() {
+                send_error(settings, error);
+            }
         }
         IpcCommand::ShowSettings => {
             settings_window.set_visible(true);
@@ -234,6 +254,12 @@ fn handle_ipc(
         ),
         IpcCommand::StartRecording => start_recording(controller, runtime.clone(), proxy.clone()),
         IpcCommand::StopRecording => stop_recording(controller, runtime.clone(), proxy.clone()),
+        IpcCommand::DragSettings => {
+            let _ = settings_window.drag_window();
+        }
+        IpcCommand::HideSettings => {
+            settings_window.set_visible(false);
+        }
         IpcCommand::DragHud => {
             let _ = proxy.send_event(UserEvent::DragHud);
         }
@@ -316,10 +342,13 @@ fn parse_ipc(message: &str) -> Result<IpcCommand> {
     match value.get("command").and_then(serde_json::Value::as_str) {
         Some("get_config") => Ok(IpcCommand::GetConfig),
         Some("capture_raw_key") => Ok(IpcCommand::CaptureRawKey),
+        Some("open_logs") => Ok(IpcCommand::OpenLogs),
         Some("show_settings") => Ok(IpcCommand::ShowSettings),
         Some("get_voice_state") => Ok(IpcCommand::GetVoiceState),
         Some("start_recording") => Ok(IpcCommand::StartRecording),
         Some("stop_recording") => Ok(IpcCommand::StopRecording),
+        Some("drag_settings") => Ok(IpcCommand::DragSettings),
+        Some("hide_settings") => Ok(IpcCommand::HideSettings),
         Some("drag_hud") => Ok(IpcCommand::DragHud),
         Some("save_config") => Ok(IpcCommand::SaveConfig(serde_json::from_value(
             value
@@ -330,6 +359,40 @@ fn parse_ipc(message: &str) -> Result<IpcCommand> {
         )?)),
         _ => Err(anyhow!("unknown IPC command")),
     }
+}
+
+fn logs_directory() -> PathBuf {
+    AppConfig::config_path()
+        .parent()
+        .map(|parent| parent.join("logs"))
+        .unwrap_or_else(|| PathBuf::from("logs"))
+}
+
+#[cfg(target_os = "windows")]
+fn open_logs_directory() -> Result<()> {
+    let directory = logs_directory();
+    std::fs::create_dir_all(&directory)?;
+    std::process::Command::new("explorer.exe")
+        .arg(&directory)
+        .spawn()
+        .map_err(|error| anyhow!("无法打开日志文件夹 {}：{error}", directory.display()))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_logs_directory() -> Result<()> {
+    let directory = logs_directory();
+    std::fs::create_dir_all(&directory)?;
+    std::process::Command::new("xdg-open")
+        .arg(&directory)
+        .spawn()
+        .map_err(|error| {
+            anyhow!(
+                "Unable to open log directory {}: {error}",
+                directory.display()
+            )
+        })?;
+    Ok(())
 }
 
 fn asset_response(path: &str) -> Response<Cow<'static, [u8]>> {
@@ -383,6 +446,47 @@ fn set_hud_no_activate(window: &Window) {
         );
     }
 }
+
+#[cfg(target_os = "windows")]
+fn set_settings_immersive_theme(window: &Window) {
+    use std::{ffi::c_void, mem::size_of};
+    use windows::Win32::{
+        Foundation::HWND,
+        Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+        },
+    };
+
+    unsafe fn set_attribute<T: Copy>(
+        hwnd: HWND,
+        attribute: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE,
+        value: &T,
+    ) {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            attribute,
+            value as *const T as *const c_void,
+            size_of::<T>() as u32,
+        );
+    }
+
+    unsafe {
+        let hwnd = HWND(window.hwnd() as isize);
+        let dark_mode: i32 = 1;
+        // COLORREF values use 0x00BBGGRR byte order.
+        let caption_color: u32 = 0x001A_1617; // #17161a
+        let border_color: u32 = 0x003E_3539; // #39353e
+        let text_color: u32 = 0x00ED_E5E9; // #e9e5ed
+        set_attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_mode);
+        set_attribute(hwnd, DWMWA_CAPTION_COLOR, &caption_color);
+        set_attribute(hwnd, DWMWA_BORDER_COLOR, &border_color);
+        set_attribute(hwnd, DWMWA_TEXT_COLOR, &text_color);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_settings_immersive_theme(_window: &Window) {}
 
 #[cfg(not(target_os = "windows"))]
 fn set_hud_no_activate(_window: &Window) {}

@@ -1,8 +1,9 @@
 //! Global and raw keyboard shortcut management.
 //!
 //! Standard shortcuts continue to use `global-hotkey`.  On Windows, raw
-//! bindings are observed with a low-level keyboard hook so vendor keys which
-//! do not have a `global-hotkey::Code` can still be configured.
+//! bindings are observed with low-level keyboard and mouse hooks so vendor
+//! keys and mouse side buttons which do not have a `global-hotkey::Code` can
+//! still be configured.
 
 use anyhow::{anyhow, Result};
 use global_hotkey::{
@@ -45,6 +46,8 @@ pub struct HotkeyManager {
     config: Arc<RwLock<HotkeyConfig>>,
     is_active: Arc<AtomicBool>,
     listener_started: Arc<AtomicBool>,
+    #[cfg(target_os = "windows")]
+    capture_sender: Arc<Mutex<Option<mpsc::Sender<RawKeyBinding>>>>,
 }
 
 impl HotkeyManager {
@@ -84,6 +87,8 @@ impl HotkeyManager {
             config: Arc::new(RwLock::new(config.clone())),
             is_active: Arc::new(AtomicBool::new(true)),
             listener_started: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "windows")]
+            capture_sender: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -212,8 +217,9 @@ impl HotkeyManager {
         {
             let raw_config = config;
             let raw_active = is_active;
+            let capture_sender = self.capture_sender.clone();
             thread::spawn(move || {
-                run_raw_key_hook(raw_config, raw_active, callback);
+                run_raw_key_hook(raw_config, raw_active, callback, capture_sender);
             });
         }
 
@@ -251,24 +257,25 @@ impl HotkeyManager {
 
     /// Capture the next physical Windows key for use as a raw binding.
     #[cfg(target_os = "windows")]
-    pub fn capture_raw_key(timeout: Duration) -> Result<RawKeyBinding> {
-        let (ready_tx, ready_rx) = mpsc::channel();
+    pub fn capture_raw_key(&self, timeout: Duration) -> Result<RawKeyBinding> {
         let (result_tx, result_rx) = mpsc::channel();
-
-        thread::spawn(move || run_capture_hook(ready_tx, result_tx));
-
-        let thread_id = ready_rx
-            .recv_timeout(timeout)
-            .map_err(|_| anyhow!("Timed out waiting for the keyboard capture hook"))?;
-
-        let result = result_rx.recv_timeout(timeout);
-        unsafe {
-            use windows::Win32::Foundation::{LPARAM, WPARAM};
-            use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
-            let _ = PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
+        {
+            let mut sender = self
+                .capture_sender
+                .lock()
+                .map_err(|_| anyhow!("Raw-key capture state is poisoned"))?;
+            if sender.is_some() {
+                return Err(anyhow!("A raw-key capture is already in progress"));
+            }
+            *sender = Some(result_tx);
         }
-
-        result.map_err(|_| anyhow!("No keyboard event was captured before timeout"))
+        let result = result_rx.recv_timeout(timeout);
+        if let Ok(mut sender) = self.capture_sender.lock() {
+            sender.take();
+        }
+        result.map_err(|_| {
+            anyhow!("No physical key or mouse side-button was captured before timeout")
+        })
     }
 }
 
@@ -324,12 +331,14 @@ fn run_raw_key_hook(
     config: Arc<RwLock<HotkeyConfig>>,
     is_active: Arc<AtomicBool>,
     callback: Arc<dyn Fn(HotkeyEvent) + Send + Sync>,
+    capture_sender: Arc<Mutex<Option<mpsc::Sender<RawKeyBinding>>>>,
 ) {
     use std::cell::RefCell;
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-        HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_QUIT,
+        HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_QUIT,
+        WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
 
     struct HookState {
@@ -337,7 +346,9 @@ fn run_raw_key_hook(
         is_active: Arc<AtomicBool>,
         callback: Arc<dyn Fn(HotkeyEvent) + Send + Sync>,
         pressed: Option<RawKeyBinding>,
+        hold_active: bool,
         last_modifier_release: Option<Instant>,
+        capture_sender: Arc<Mutex<Option<mpsc::Sender<RawKeyBinding>>>>,
     }
 
     thread_local! {
@@ -350,7 +361,9 @@ fn run_raw_key_hook(
             is_active,
             callback,
             pressed: None,
+            hold_active: false,
             last_modifier_release: None,
+            capture_sender,
         });
     });
 
@@ -380,6 +393,10 @@ fn run_raw_key_hook(
                             || wparam.0 as u32 == 0x0101
                             || wparam.0 as u32 == 0x0105;
 
+                        if !is_up && deliver_capture(&hook.capture_sender, identity) {
+                            return;
+                        }
+
                         let config = match hook.config.read() {
                             Ok(config) => config.clone(),
                             Err(_) => return,
@@ -396,7 +413,8 @@ fn run_raw_key_hook(
                         if is_up {
                             if hook.pressed == Some(identity) {
                                 hook.pressed = None;
-                                if raw_matches && config.raw_trigger.eq_ignore_ascii_case("hold") {
+                                if hook.hold_active {
+                                    hook.hold_active = false;
                                     (hook.callback)(HotkeyEvent::Release);
                                 }
                             }
@@ -415,6 +433,7 @@ fn run_raw_key_hook(
                         } else if raw_matches && hook.pressed.is_none() {
                             hook.pressed = Some(identity);
                             if config.raw_trigger.eq_ignore_ascii_case("hold") {
+                                hook.hold_active = true;
                                 (hook.callback)(HotkeyEvent::Press);
                             } else {
                                 (hook.callback)(HotkeyEvent::Toggle);
@@ -428,10 +447,70 @@ fn run_raw_key_hook(
         CallNextHookEx(HHOOK::default(), code, wparam, lparam)
     }
 
-    let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) };
-    match hook {
-        Ok(hook) => {
-            tracing::info!("Raw keyboard hook installed");
+    unsafe extern "system" fn mouse_hook_proc(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if code >= 0 && matches!(wparam.0 as u32, WM_XBUTTONDOWN | WM_XBUTTONUP) {
+            let mouse = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+            if let Some(identity) = mouse_side_button_binding(mouse.mouseData) {
+                HOOK_STATE.with(|state| {
+                    if let Some(ref mut hook) = *state.borrow_mut() {
+                        if !hook.is_active.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        if wparam.0 as u32 == WM_XBUTTONDOWN
+                            && deliver_capture(&hook.capture_sender, identity)
+                        {
+                            return;
+                        }
+                        let config = match hook.config.read() {
+                            Ok(config) => config.clone(),
+                            Err(_) => return,
+                        };
+                        let raw_matches = config.binding.eq_ignore_ascii_case("raw")
+                            && config.raw_vk_code == identity.vk_code
+                            && (config.raw_scan_code == 0
+                                || config.raw_scan_code == identity.scan_code)
+                            && config.raw_extended == identity.extended;
+                        if wparam.0 as u32 == WM_XBUTTONUP {
+                            if hook.pressed == Some(identity) {
+                                hook.pressed = None;
+                                if hook.hold_active {
+                                    hook.hold_active = false;
+                                    (hook.callback)(HotkeyEvent::Release);
+                                }
+                            }
+                        } else if raw_matches && hook.pressed.is_none() {
+                            hook.pressed = Some(identity);
+                            if config.raw_trigger.eq_ignore_ascii_case("hold") {
+                                hook.hold_active = true;
+                                (hook.callback)(HotkeyEvent::Press);
+                            } else {
+                                (hook.callback)(HotkeyEvent::Toggle);
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+    }
+
+    let keyboard_hook =
+        unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) };
+    match keyboard_hook {
+        Ok(keyboard_hook) => {
+            let mouse_hook =
+                unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0) }
+                    .map_err(|error| {
+                        tracing::warn!("Mouse side-button hook is unavailable: {:?}", error);
+                    })
+                    .ok();
+            if mouse_hook.is_some() {
+                tracing::info!("Raw keyboard and mouse side-button hooks installed");
+            }
             let mut msg = MSG::default();
             unsafe {
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -440,7 +519,10 @@ fn run_raw_key_hook(
                     }
                     DispatchMessageW(&msg);
                 }
-                let _ = UnhookWindowsHookEx(hook);
+                if let Some(mouse_hook) = mouse_hook {
+                    let _ = UnhookWindowsHookEx(mouse_hook);
+                }
+                let _ = UnhookWindowsHookEx(keyboard_hook);
             }
         }
         Err(error) => tracing::error!("Failed to install raw keyboard hook: {:?}", error),
@@ -448,61 +530,32 @@ fn run_raw_key_hook(
 }
 
 #[cfg(target_os = "windows")]
-fn run_capture_hook(ready_tx: mpsc::Sender<u32>, result_tx: mpsc::Sender<RawKeyBinding>) {
-    use std::cell::RefCell;
-    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
-    use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, PostQuitMessage, SetWindowsHookExW,
-        UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, LLKHF_UP, MSG,
-        WH_KEYBOARD_LL,
+fn deliver_capture(
+    capture_sender: &Mutex<Option<mpsc::Sender<RawKeyBinding>>>,
+    binding: RawKeyBinding,
+) -> bool {
+    let Ok(mut sender) = capture_sender.lock() else {
+        return false;
     };
-
-    thread_local! {
-        static CAPTURE_SENDER: RefCell<Option<mpsc::Sender<RawKeyBinding>>> =
-            const { RefCell::new(None) };
-    }
-
-    CAPTURE_SENDER.with(|sender| *sender.borrow_mut() = Some(result_tx));
-
-    unsafe extern "system" fn capture_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if code >= 0 {
-            let keyboard = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-            if !keyboard.flags.contains(LLKHF_INJECTED)
-                && !keyboard.flags.contains(LLKHF_UP)
-                && wparam.0 as u32 != 0x0104
-            {
-                let binding = RawKeyBinding {
-                    vk_code: keyboard.vkCode,
-                    scan_code: keyboard.scanCode,
-                    extended: keyboard.flags.contains(LLKHF_EXTENDED),
-                };
-                CAPTURE_SENDER.with(|sender| {
-                    if let Some(sender) = sender.borrow_mut().take() {
-                        let _ = sender.send(binding);
-                        PostQuitMessage(0);
-                    }
-                });
-            }
-        }
-
-        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
-    }
-
-    let thread_id = unsafe { GetCurrentThreadId() };
-    let _ = ready_tx.send(thread_id);
-    let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(capture_proc), None, 0) };
-    let Ok(hook) = hook else {
-        return;
+    let Some(sender) = sender.take() else {
+        return false;
     };
+    let _ = sender.send(binding);
+    true
+}
 
-    let mut msg = MSG::default();
-    unsafe {
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            DispatchMessageW(&msg);
-        }
-        let _ = UnhookWindowsHookEx(hook);
-    }
+#[cfg(target_os = "windows")]
+fn mouse_side_button_binding(mouse_data: u32) -> Option<RawKeyBinding> {
+    let vk_code = match (mouse_data >> 16) as u16 {
+        1 => 0x05, // VK_XBUTTON1
+        2 => 0x06, // VK_XBUTTON2
+        _ => return None,
+    };
+    Some(RawKeyBinding {
+        vk_code,
+        scan_code: 0,
+        extended: false,
+    })
 }
 
 /// Parse a combo key string like `Ctrl+Shift+V`.
@@ -636,5 +689,29 @@ mod tests {
             ..HotkeyConfig::default()
         };
         assert!(configured_standard_hotkey(&config).is_ok());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn mouse_side_buttons_map_to_windows_virtual_keys() {
+        assert_eq!(mouse_side_button_binding(1 << 16).unwrap().vk_code, 0x05);
+        assert_eq!(mouse_side_button_binding(2 << 16).unwrap().vk_code, 0x06);
+        assert!(mouse_side_button_binding(0).is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn capture_request_is_delivered_only_once() {
+        let (sender, receiver) = mpsc::channel();
+        let capture_sender = Mutex::new(Some(sender));
+        let binding = RawKeyBinding {
+            vk_code: 0xB6,
+            scan_code: 0,
+            extended: true,
+        };
+
+        assert!(deliver_capture(&capture_sender, binding));
+        assert!(!deliver_capture(&capture_sender, binding));
+        assert_eq!(receiver.try_recv().unwrap(), binding);
     }
 }

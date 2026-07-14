@@ -84,7 +84,8 @@ impl RichChatClient {
                 api_key: Arc::from(api_key),
                 model: Arc::from(model),
                 thinking_mode: normalize_thinking_mode(&config.llm_thinking_mode).map(Arc::from),
-                reasoning_effort: non_empty(&config.llm_reasoning_effort).map(Arc::from),
+                reasoning_effort: normalize_reasoning_effort(&config.llm_reasoning_effort)
+                    .map(Arc::from),
             })
         };
         Ok(Self {
@@ -227,6 +228,15 @@ fn normalize_thinking_mode(value: &str) -> Option<&str> {
     match value.trim().to_ascii_lowercase().as_str() {
         "enabled" => Some("enabled"),
         "disabled" => Some("disabled"),
+        _ => None,
+    }
+}
+
+fn normalize_reasoning_effort(value: &str) -> Option<&str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
         _ => None,
     }
 }
@@ -559,6 +569,15 @@ mod tests {
                 "reasoning_effort": "high",
             })
         );
+    }
+
+    #[test]
+    fn reasoning_effort_only_accepts_supported_options() {
+        assert_eq!(normalize_reasoning_effort(" LOW "), Some("low"));
+        assert_eq!(normalize_reasoning_effort("medium"), Some("medium"));
+        assert_eq!(normalize_reasoning_effort("high"), Some("high"));
+        assert_eq!(normalize_reasoning_effort(""), None);
+        assert_eq!(normalize_reasoning_effort("user supplied text"), None);
     }
 
     #[test]
