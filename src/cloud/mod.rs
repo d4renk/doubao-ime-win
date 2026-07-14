@@ -9,6 +9,7 @@ use std::time::Duration;
 
 pub use lexicon::NerLexicon;
 pub use ner::{NerClient, NerWord};
+pub(crate) use rich_chat::default_speech_correction_instruction;
 pub use rich_chat::{RichChatClient, RichChatInput, RichChatResult};
 
 pub const NER_TASK_BUDGET: Duration = Duration::from_secs(2);

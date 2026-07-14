@@ -9,6 +9,10 @@ use crate::data::CloudConfig;
 
 const SPEECH_CORRECTION_INSTRUCTION: &str = "删除口头语和重复内容，并结合上下文纠错、调整语序。";
 
+pub(crate) fn default_speech_correction_instruction() -> &'static str {
+    SPEECH_CORRECTION_INSTRUCTION
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RichChatInput {
     pub query: String,
@@ -228,7 +232,7 @@ fn normalize_thinking_mode(value: &str) -> Option<&str> {
 }
 
 fn speech_correction_instruction(configured_prompt: &str) -> &str {
-    non_empty(configured_prompt).unwrap_or(SPEECH_CORRECTION_INSTRUCTION)
+    non_empty(configured_prompt).unwrap_or(default_speech_correction_instruction())
 }
 
 fn speech_correction_query(instruction: &str, input: &RichChatInput) -> String {

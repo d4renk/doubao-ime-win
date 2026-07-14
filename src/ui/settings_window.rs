@@ -18,6 +18,7 @@ pub fn show_settings(config: AppConfig, manager: HotkeyManager) {
 #[cfg(target_os = "windows")]
 mod windows_settings {
     use super::*;
+    use crate::cloud::default_speech_correction_instruction;
     use std::cell::RefCell;
     use std::sync::mpsc::{self, Receiver};
     use std::thread;
@@ -53,6 +54,9 @@ mod windows_settings {
     const ID_LLM_REASONING_EFFORT: usize = 122;
     const ID_LLM_PROMPT: usize = 123;
     const ID_TIMER: usize = 1;
+    // Keep the existing fixed-layout controls visible when the user resizes the window.
+    const MIN_WINDOW_WIDTH: i32 = 760;
+    const MIN_WINDOW_HEIGHT: i32 = 960;
 
     struct DialogState {
         config: AppConfig,
@@ -153,11 +157,16 @@ mod windows_settings {
                 WS_EX_DLGMODALFRAME,
                 class_name,
                 w!("豆包语音输入 - 用户设置 / VoiceUtility Settings"),
-                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+                WS_OVERLAPPED
+                    | WS_CAPTION
+                    | WS_SYSMENU
+                    | WS_THICKFRAME
+                    | WS_MAXIMIZEBOX
+                    | WS_VISIBLE,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                760,
-                960,
+                MIN_WINDOW_WIDTH,
+                MIN_WINDOW_HEIGHT,
                 HWND::default(),
                 HMENU::default(),
                 instance,
@@ -351,6 +360,12 @@ mod windows_settings {
         _lparam: LPARAM,
     ) -> LRESULT {
         match message {
+            WM_GETMINMAXINFO => {
+                let min_max_info = &mut *(_lparam.0 as *mut MINMAXINFO);
+                min_max_info.ptMinTrackSize.x = MIN_WINDOW_WIDTH;
+                min_max_info.ptMinTrackSize.y = MIN_WINDOW_HEIGHT;
+                LRESULT(0)
+            }
             WM_CREATE => {
                 let Ok(instance) = GetModuleHandleW(None) else {
                     return LRESULT(0);
@@ -951,7 +966,12 @@ mod windows_settings {
                         ID_LLM_PROMPT,
                         instance,
                     );
-                    set_text(state.llm_prompt_edit, &state.config.cloud.llm_prompt);
+                    let prompt = if state.config.cloud.llm_prompt.trim().is_empty() {
+                        default_speech_correction_instruction()
+                    } else {
+                        &state.config.cloud.llm_prompt
+                    };
+                    set_text(state.llm_prompt_edit, prompt);
                     create_control(
                         w!("BUTTON"),
                         w!("保存"),
