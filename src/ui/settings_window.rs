@@ -24,6 +24,7 @@ mod windows_settings {
     use std::time::Duration;
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Graphics::Gdi::{GetSysColorBrush, COLOR_WINDOW};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Controls::{BST_CHECKED, BST_UNCHECKED};
     use windows::Win32::UI::WindowsAndMessaging::*;
@@ -45,6 +46,11 @@ mod windows_settings {
     const ID_END_SMOOTH_WINDOW: usize = 115;
     const ID_POST_RATIO_GAIN: usize = 116;
     const ID_AEC: usize = 117;
+    const ID_LLM_BASE_URL: usize = 118;
+    const ID_LLM_API_KEY: usize = 119;
+    const ID_LLM_MODEL: usize = 120;
+    const ID_LLM_THINKING: usize = 121;
+    const ID_LLM_REASONING_EFFORT: usize = 122;
     const ID_TIMER: usize = 1;
 
     struct DialogState {
@@ -65,6 +71,11 @@ mod windows_settings {
         post_ratio_gain_combo: HWND,
         ner_enabled_check: HWND,
         auto_polish_enabled_check: HWND,
+        llm_base_url_edit: HWND,
+        llm_api_key_edit: HWND,
+        llm_model_edit: HWND,
+        llm_thinking_combo: HWND,
+        llm_reasoning_effort_edit: HWND,
         capture_rx: Option<Receiver<anyhow::Result<crate::business::RawKeyBinding>>>,
     }
 
@@ -108,6 +119,11 @@ mod windows_settings {
                 post_ratio_gain_combo: HWND::default(),
                 ner_enabled_check: HWND::default(),
                 auto_polish_enabled_check: HWND::default(),
+                llm_base_url_edit: HWND::default(),
+                llm_api_key_edit: HWND::default(),
+                llm_model_edit: HWND::default(),
+                llm_thinking_combo: HWND::default(),
+                llm_reasoning_effort_edit: HWND::default(),
                 capture_rx: None,
             });
         });
@@ -123,6 +139,8 @@ mod windows_settings {
                 lpfnWndProc: Some(window_proc),
                 hInstance: instance.into(),
                 hCursor: cursor,
+                // Static labels are transparent, so the client area must have a real brush.
+                hbrBackground: GetSysColorBrush(COLOR_WINDOW),
                 lpszClassName: class_name,
                 ..Default::default()
             };
@@ -136,7 +154,7 @@ mod windows_settings {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 760,
-                680,
+                850,
                 HWND::default(),
                 HMENU::default(),
                 instance,
@@ -303,6 +321,22 @@ mod windows_settings {
             2 => 1.25,
             3 => 1.5,
             _ => 1.0,
+        }
+    }
+
+    fn thinking_mode_index(value: &str) -> usize {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "disabled" => 1,
+            "enabled" => 2,
+            _ => 0,
+        }
+    }
+
+    fn thinking_mode_from_index(index: usize) -> &'static str {
+        match index {
+            1 => "disabled",
+            2 => "enabled",
+            _ => "omit",
         }
     }
 
@@ -751,13 +785,143 @@ mod windows_settings {
                         state.config.cloud.auto_polish_enabled,
                     );
                     create_control(
+                        w!("STATIC"),
+                        w!("OpenAI 接口地址："),
+                        WS_CHILD | WS_VISIBLE,
+                        465,
+                        465,
+                        260,
+                        22,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.llm_base_url_edit = create_control(
+                        w!("EDIT"),
+                        w!(""),
+                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER,
+                        465,
+                        488,
+                        260,
+                        24,
+                        hwnd,
+                        ID_LLM_BASE_URL,
+                        instance,
+                    );
+                    set_text(state.llm_base_url_edit, &state.config.cloud.llm_base_url);
+                    create_control(
+                        w!("STATIC"),
+                        w!("API Key："),
+                        WS_CHILD | WS_VISIBLE,
+                        465,
+                        518,
+                        260,
+                        22,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.llm_api_key_edit = create_control(
+                        w!("EDIT"),
+                        w!(""),
+                        WINDOW_STYLE(
+                            WS_CHILD.0
+                                | WS_VISIBLE.0
+                                | WS_TABSTOP.0
+                                | WS_BORDER.0
+                                | ES_PASSWORD as u32,
+                        ),
+                        465,
+                        541,
+                        260,
+                        24,
+                        hwnd,
+                        ID_LLM_API_KEY,
+                        instance,
+                    );
+                    set_text(state.llm_api_key_edit, &state.config.cloud.llm_api_key);
+                    create_control(
+                        w!("STATIC"),
+                        w!("模型："),
+                        WS_CHILD | WS_VISIBLE,
+                        465,
+                        571,
+                        260,
+                        22,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.llm_model_edit = create_control(
+                        w!("EDIT"),
+                        w!(""),
+                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER,
+                        465,
+                        594,
+                        260,
+                        24,
+                        hwnd,
+                        ID_LLM_MODEL,
+                        instance,
+                    );
+                    set_text(state.llm_model_edit, &state.config.cloud.llm_model);
+                    create_control(
+                        w!("STATIC"),
+                        w!("深度思考参数："),
+                        WS_CHILD | WS_VISIBLE,
+                        465,
+                        624,
+                        260,
+                        22,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.llm_thinking_combo = create_control(
+                        w!("COMBOBOX"),
+                        w!(""),
+                        WINDOW_STYLE(
+                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | CBS_DROPDOWNLIST as u32,
+                        ),
+                        465,
+                        647,
+                        125,
+                        100,
+                        hwnd,
+                        ID_LLM_THINKING,
+                        instance,
+                    );
+                    add_combo_item(state.llm_thinking_combo, "不发送");
+                    add_combo_item(state.llm_thinking_combo, "disabled");
+                    add_combo_item(state.llm_thinking_combo, "enabled");
+                    set_combo_selection(
+                        state.llm_thinking_combo,
+                        thinking_mode_index(&state.config.cloud.llm_thinking_mode),
+                    );
+                    state.llm_reasoning_effort_edit = create_control(
+                        w!("EDIT"),
+                        w!(""),
+                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER,
+                        600,
+                        647,
+                        125,
+                        24,
+                        hwnd,
+                        ID_LLM_REASONING_EFFORT,
+                        instance,
+                    );
+                    set_text(
+                        state.llm_reasoning_effort_edit,
+                        &state.config.cloud.llm_reasoning_effort,
+                    );
+                    create_control(
                         w!("BUTTON"),
                         w!("保存"),
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
                         ),
                         550,
-                        590,
+                        760,
                         80,
                         30,
                         hwnd,
@@ -771,7 +935,7 @@ mod windows_settings {
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
                         ),
                         645,
-                        590,
+                        760,
                         80,
                         30,
                         hwnd,
@@ -838,6 +1002,14 @@ mod windows_settings {
                             state.config.cloud.ner_enabled = is_checked(state.ner_enabled_check);
                             state.config.cloud.auto_polish_enabled =
                                 is_checked(state.auto_polish_enabled_check);
+                            state.config.cloud.llm_base_url = get_text(state.llm_base_url_edit);
+                            state.config.cloud.llm_api_key = get_text(state.llm_api_key_edit);
+                            state.config.cloud.llm_model = get_text(state.llm_model_edit);
+                            state.config.cloud.llm_thinking_mode =
+                                thinking_mode_from_index(combo_selection(state.llm_thinking_combo))
+                                    .to_string();
+                            state.config.cloud.llm_reasoning_effort =
+                                get_text(state.llm_reasoning_effort_edit);
                             state.config.hotkey.combo_key = get_text(state.combo_edit);
                             if let Err(error) = state.manager.reconfigure(&state.config.hotkey) {
                                 let message = wide(&format!("快捷键设置无效：{}", error));

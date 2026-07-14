@@ -256,6 +256,21 @@ pub struct CloudConfig {
     /// Remove filler speech after a voice session and auto-replace on success.
     #[serde(default = "default_true")]
     pub auto_polish_enabled: bool,
+    /// OpenAI-compatible Chat Completions URL. Empty keeps the built-in service.
+    #[serde(default)]
+    pub llm_base_url: String,
+    /// Bearer token for the custom OpenAI-compatible service.
+    #[serde(default)]
+    pub llm_api_key: String,
+    /// Model name used with the custom OpenAI-compatible service.
+    #[serde(default)]
+    pub llm_model: String,
+    /// Optional provider extension: `omit`, `disabled`, or `enabled`.
+    #[serde(default = "default_llm_thinking_mode")]
+    pub llm_thinking_mode: String,
+    /// Optional OpenAI-compatible reasoning effort, such as `low`, `medium`, or `high`.
+    #[serde(default)]
+    pub llm_reasoning_effort: String,
 }
 
 impl Default for CloudConfig {
@@ -263,8 +278,17 @@ impl Default for CloudConfig {
         Self {
             ner_enabled: true,
             auto_polish_enabled: true,
+            llm_base_url: String::new(),
+            llm_api_key: String::new(),
+            llm_model: String::new(),
+            llm_thinking_mode: default_llm_thinking_mode(),
+            llm_reasoning_effort: String::new(),
         }
     }
+}
+
+fn default_llm_thinking_mode() -> String {
+    "omit".to_string()
 }
 
 /// Audio format sent to the ASR service.
@@ -324,6 +348,7 @@ mod tests {
         assert_eq!(config.asr.post_ratio_gain, 1.0);
         assert!(config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
+        assert_eq!(config.cloud.llm_thinking_mode, "omit");
     }
 
     #[test]
@@ -344,6 +369,7 @@ mod tests {
 
         assert!(!config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
+        assert_eq!(config.cloud.llm_thinking_mode, "omit");
     }
 
     #[test]
@@ -356,6 +382,11 @@ mod tests {
         config.asr.post_ratio_gain = 1.25;
         config.cloud.ner_enabled = false;
         config.cloud.auto_polish_enabled = false;
+        config.cloud.llm_base_url = "https://example.com/v1/chat/completions".to_string();
+        config.cloud.llm_api_key = "secret".to_string();
+        config.cloud.llm_model = "example-model".to_string();
+        config.cloud.llm_thinking_mode = "enabled".to_string();
+        config.cloud.llm_reasoning_effort = "high".to_string();
 
         let serialized = toml::to_string(&config).unwrap();
         let restored: AppConfig = toml::from_str(&serialized).unwrap();
@@ -367,6 +398,14 @@ mod tests {
         assert_eq!(restored.asr.post_ratio_gain, 1.25);
         assert!(!restored.cloud.ner_enabled);
         assert!(!restored.cloud.auto_polish_enabled);
+        assert_eq!(
+            restored.cloud.llm_base_url,
+            "https://example.com/v1/chat/completions"
+        );
+        assert_eq!(restored.cloud.llm_api_key, "secret");
+        assert_eq!(restored.cloud.llm_model, "example-model");
+        assert_eq!(restored.cloud.llm_thinking_mode, "enabled");
+        assert_eq!(restored.cloud.llm_reasoning_effort, "high");
     }
 
     #[test]
