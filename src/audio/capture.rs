@@ -22,6 +22,7 @@ const AEC_FRAMES_PER_CAPTURE_FRAME: usize = 2;
 
 pub struct AudioCapture {
     is_recording: Arc<AtomicBool>,
+    meter_level: Arc<AtomicU64>,
 }
 
 impl AudioCapture {
@@ -41,11 +42,17 @@ impl AudioCapture {
 
         Ok(Self {
             is_recording: Arc::new(AtomicBool::new(false)),
+            meter_level: Arc::new(AtomicU64::new(0)),
         })
     }
 
     pub fn is_recording(&self) -> bool {
         self.is_recording.load(Ordering::SeqCst)
+    }
+
+    /// Current normalized microphone level for display-only UI feedback.
+    pub fn meter_level(&self) -> f32 {
+        f32::from_bits(self.meter_level.load(Ordering::Relaxed) as u32)
     }
 
     pub fn start(
@@ -59,6 +66,7 @@ impl AudioCapture {
 
         let (tokio_tx, tokio_rx) = tokio_mpsc::channel::<Vec<u8>>(100);
         let is_recording = self.is_recording.clone();
+        let meter_level = self.meter_level.clone();
 
         thread::spawn(move || {
             #[cfg(target_os = "windows")]
@@ -78,6 +86,7 @@ impl AudioCapture {
                 run_audio_capture(
                     tokio_tx,
                     is_recording.clone(),
+                    meter_level,
                     audio_quality,
                     processing_config,
                 )
@@ -113,6 +122,7 @@ impl AudioCapture {
 fn run_audio_capture(
     tokio_tx: tokio_mpsc::Sender<Vec<u8>>,
     is_recording: Arc<AtomicBool>,
+    meter_level: Arc<AtomicU64>,
     audio_quality: AudioQuality,
     processing_config: AudioProcessingConfig,
 ) -> Result<()> {
@@ -320,6 +330,17 @@ fn run_audio_capture(
                         None => processing_frame,
                     };
 
+                    let rms = (echo_cancelled
+                        .iter()
+                        .map(|sample| sample * sample)
+                        .sum::<f32>()
+                        / echo_cancelled.len().max(1) as f32)
+                        .sqrt();
+                    meter_level.store(
+                        (rms * 12.0).clamp(0.0, 1.0).to_bits() as u64,
+                        Ordering::Relaxed,
+                    );
+
                     // Continuously resample with anti-alias filtering. The resampler may
                     // return zero or multiple exact-size Opus input frames per chunk.
                     for mut resampled in resampler.process(&echo_cancelled)? {
@@ -383,6 +404,7 @@ fn run_audio_capture(
         total,
         total as f32 * 0.02
     );
+    meter_level.store(0, Ordering::Relaxed);
 
     Ok(())
 }

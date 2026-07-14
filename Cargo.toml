@@ -64,6 +64,10 @@ md5 = "0.7"
 
 # Image for tray icon
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+tao = "0.35.3"
+wry = { version = "0.55.1", default-features = false, features = ["protocol", "transparent"] }
+rust-embed = "8.12.0"
+mime_guess = "2.0"
 
 # Windows API
 [target.'cfg(windows)'.dependencies]
@@ -81,6 +85,7 @@ windows = { version = "0.52", features = [
     "Win32_System_Threading",
     "Win32_System_LibraryLoader",
     "Win32_Graphics_Gdi",
+    "Win32_System_Ole",
 ] }
 
 [build-dependencies]

@@ -107,7 +107,7 @@ async fn run_ui_mode_inner() -> Result<()> {
     }
 
     let voice_controller = Arc::new(Mutex::new(
-        VoiceController::new(asr_client, audio_capture, text_inserter.clone()).with_cloud(
+        VoiceController::new(asr_client, audio_capture.clone(), text_inserter.clone()).with_cloud(
             ner_client,
             ner_lexicon,
             rich_chat_client,
@@ -122,7 +122,7 @@ async fn run_ui_mode_inner() -> Result<()> {
 
     // Run system tray (hotkey callback is set up inside run_app for state sync)
     info!("Starting system tray...");
-    doubao_voice_input::ui::run_app(config, voice_controller, hotkey_manager).await?;
+    doubao_voice_input::ui::run_app(config, voice_controller, hotkey_manager, audio_capture)?;
 
     info!("Application exited");
     Ok(())

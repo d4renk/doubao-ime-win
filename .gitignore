@@ -32,6 +32,12 @@
 !/proto/*.proto
 !/scripts/*.ps1
 !/src/**/*.rs
+!/frontend/index.html
+!/frontend/package.json
+!/frontend/package-lock.json
+!/frontend/tsconfig.json
+!/frontend/src/**/*.ts
+!/frontend/src/**/*.css
 !/tools/protoc/include/**/*.proto
 !/tools/protoc/readme.txt
 
