@@ -26,6 +26,7 @@ pub struct RichChatResult {
 pub struct RichChatClient {
     http: Client,
     backend: RichChatBackend,
+    instruction: Arc<str>,
 }
 
 #[derive(Clone)]
@@ -82,7 +83,11 @@ impl RichChatClient {
                 reasoning_effort: non_empty(&config.llm_reasoning_effort).map(Arc::from),
             })
         };
-        Ok(Self { http, backend })
+        Ok(Self {
+            http,
+            backend,
+            instruction: Arc::from(speech_correction_instruction(&config.llm_prompt)),
+        })
     }
 
     pub async fn polish(&self, input: RichChatInput) -> Result<RichChatResult, CloudError> {
@@ -111,7 +116,7 @@ impl RichChatClient {
         endpoints: &CloudEndpoints,
         did: &str,
     ) -> Result<RichChatResult, CloudError> {
-        let cleanup_query = speech_correction_query(&input);
+        let cleanup_query = speech_correction_query(&self.instruction, &input);
         let request = RichChatRequest {
             scene: 5,
             query: &cleanup_query,
@@ -160,13 +165,13 @@ impl RichChatClient {
         input: RichChatInput,
         config: &OpenAiConfig,
     ) -> Result<RichChatResult, CloudError> {
-        let prompt = speech_correction_query(&input);
+        let prompt = speech_correction_query(&self.instruction, &input);
         let request = OpenAiRequest {
             model: &config.model,
             messages: [
                 OpenAiMessage {
                     role: "system",
-                    content: SPEECH_CORRECTION_INSTRUCTION,
+                    content: &self.instruction,
                 },
                 OpenAiMessage {
                     role: "user",
@@ -222,9 +227,13 @@ fn normalize_thinking_mode(value: &str) -> Option<&str> {
     }
 }
 
-fn speech_correction_query(input: &RichChatInput) -> String {
+fn speech_correction_instruction(configured_prompt: &str) -> &str {
+    non_empty(configured_prompt).unwrap_or(SPEECH_CORRECTION_INSTRUCTION)
+}
+
+fn speech_correction_query(instruction: &str, input: &RichChatInput) -> String {
     format!(
-        "{SPEECH_CORRECTION_INSTRUCTION}\n<前文>\n{}\n</前文>\n<语音转写>\n{}\n</语音转写>\n<后文>\n{}\n</后文>",
+        "{instruction}\n<前文>\n{}\n</前文>\n<语音转写>\n{}\n</语音转写>\n<后文>\n{}\n</后文>",
         input.preceding_part, input.query, input.follows_below
     )
 }
@@ -569,15 +578,42 @@ mod tests {
     }
 
     #[test]
-    fn speech_correction_prompt_uses_the_configured_instruction() {
-        let query = speech_correction_query(&RichChatInput {
-            query: "嗯这个这个方案可以".into(),
-            preceding_part: "前文".into(),
-            follows_below: "后文".into(),
-        });
+    fn speech_correction_prompt_uses_the_default_instruction_when_not_configured() {
+        let query = speech_correction_query(
+            SPEECH_CORRECTION_INSTRUCTION,
+            &RichChatInput {
+                query: "嗯这个这个方案可以".into(),
+                preceding_part: "前文".into(),
+                follows_below: "后文".into(),
+            },
+        );
         assert!(query.starts_with(SPEECH_CORRECTION_INSTRUCTION));
         assert!(query.contains("<前文>\n前文\n</前文>"));
         assert!(query.contains("<语音转写>\n嗯这个这个方案可以\n</语音转写>"));
         assert!(query.contains("<后文>\n后文\n</后文>"));
+    }
+
+    #[test]
+    fn blank_custom_prompt_falls_back_to_the_default_instruction() {
+        assert_eq!(
+            speech_correction_instruction("  \n\t"),
+            SPEECH_CORRECTION_INSTRUCTION
+        );
+    }
+
+    #[test]
+    fn custom_prompt_completely_replaces_the_default_instruction() {
+        let instruction = speech_correction_instruction("只修正错别字。");
+        let query = speech_correction_query(
+            instruction,
+            &RichChatInput {
+                query: "原始转写".into(),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(instruction, "只修正错别字。");
+        assert!(query.starts_with("只修正错别字。\n<前文>"));
+        assert!(!query.contains(SPEECH_CORRECTION_INSTRUCTION));
     }
 }

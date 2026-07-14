@@ -265,6 +265,9 @@ pub struct CloudConfig {
     /// Model name used with the custom OpenAI-compatible service.
     #[serde(default)]
     pub llm_model: String,
+    /// Optional replacement prompt for voice correction. Empty uses the built-in prompt.
+    #[serde(default)]
+    pub llm_prompt: String,
     /// Optional provider extension: `omit`, `disabled`, or `enabled`.
     #[serde(default = "default_llm_thinking_mode")]
     pub llm_thinking_mode: String,
@@ -281,6 +284,7 @@ impl Default for CloudConfig {
             llm_base_url: String::new(),
             llm_api_key: String::new(),
             llm_model: String::new(),
+            llm_prompt: String::new(),
             llm_thinking_mode: default_llm_thinking_mode(),
             llm_reasoning_effort: String::new(),
         }
@@ -348,6 +352,7 @@ mod tests {
         assert_eq!(config.asr.post_ratio_gain, 1.0);
         assert!(config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
+        assert!(config.cloud.llm_prompt.is_empty());
         assert_eq!(config.cloud.llm_thinking_mode, "omit");
     }
 
@@ -369,6 +374,7 @@ mod tests {
 
         assert!(!config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
+        assert!(config.cloud.llm_prompt.is_empty());
         assert_eq!(config.cloud.llm_thinking_mode, "omit");
     }
 
@@ -385,6 +391,7 @@ mod tests {
         config.cloud.llm_base_url = "https://example.com/v1/chat/completions".to_string();
         config.cloud.llm_api_key = "secret".to_string();
         config.cloud.llm_model = "example-model".to_string();
+        config.cloud.llm_prompt = "只删除口头语。".to_string();
         config.cloud.llm_thinking_mode = "enabled".to_string();
         config.cloud.llm_reasoning_effort = "high".to_string();
 
@@ -404,6 +411,7 @@ mod tests {
         );
         assert_eq!(restored.cloud.llm_api_key, "secret");
         assert_eq!(restored.cloud.llm_model, "example-model");
+        assert_eq!(restored.cloud.llm_prompt, "只删除口头语。");
         assert_eq!(restored.cloud.llm_thinking_mode, "enabled");
         assert_eq!(restored.cloud.llm_reasoning_effort, "high");
     }

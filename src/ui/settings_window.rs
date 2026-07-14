@@ -51,6 +51,7 @@ mod windows_settings {
     const ID_LLM_MODEL: usize = 120;
     const ID_LLM_THINKING: usize = 121;
     const ID_LLM_REASONING_EFFORT: usize = 122;
+    const ID_LLM_PROMPT: usize = 123;
     const ID_TIMER: usize = 1;
 
     struct DialogState {
@@ -76,6 +77,7 @@ mod windows_settings {
         llm_model_edit: HWND,
         llm_thinking_combo: HWND,
         llm_reasoning_effort_edit: HWND,
+        llm_prompt_edit: HWND,
         capture_rx: Option<Receiver<anyhow::Result<crate::business::RawKeyBinding>>>,
     }
 
@@ -124,6 +126,7 @@ mod windows_settings {
                 llm_model_edit: HWND::default(),
                 llm_thinking_combo: HWND::default(),
                 llm_reasoning_effort_edit: HWND::default(),
+                llm_prompt_edit: HWND::default(),
                 capture_rx: None,
             });
         });
@@ -154,7 +157,7 @@ mod windows_settings {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 760,
-                850,
+                960,
                 HWND::default(),
                 HMENU::default(),
                 instance,
@@ -219,7 +222,8 @@ mod windows_settings {
     }
 
     unsafe fn get_text(hwnd: HWND) -> String {
-        let mut buffer = [0u16; 256];
+        let length = GetWindowTextLengthW(hwnd).max(0) as usize;
+        let mut buffer = vec![0u16; length + 1];
         let length = GetWindowTextW(hwnd, &mut buffer) as usize;
         String::from_utf16_lossy(&buffer[..length])
     }
@@ -915,13 +919,47 @@ mod windows_settings {
                         &state.config.cloud.llm_reasoning_effort,
                     );
                     create_control(
+                        w!("STATIC"),
+                        w!("润色提示词："),
+                        WS_CHILD | WS_VISIBLE,
+                        465,
+                        681,
+                        260,
+                        22,
+                        hwnd,
+                        0,
+                        instance,
+                    );
+                    state.llm_prompt_edit = create_control(
+                        w!("EDIT"),
+                        w!(""),
+                        WINDOW_STYLE(
+                            WS_CHILD.0
+                                | WS_VISIBLE.0
+                                | WS_TABSTOP.0
+                                | WS_BORDER.0
+                                | WS_VSCROLL.0
+                                | ES_MULTILINE as u32
+                                | ES_AUTOVSCROLL as u32
+                                | ES_WANTRETURN as u32,
+                        ),
+                        465,
+                        704,
+                        260,
+                        110,
+                        hwnd,
+                        ID_LLM_PROMPT,
+                        instance,
+                    );
+                    set_text(state.llm_prompt_edit, &state.config.cloud.llm_prompt);
+                    create_control(
                         w!("BUTTON"),
                         w!("保存"),
                         WINDOW_STYLE(
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
                         ),
                         550,
-                        760,
+                        840,
                         80,
                         30,
                         hwnd,
@@ -935,7 +973,7 @@ mod windows_settings {
                             WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
                         ),
                         645,
-                        760,
+                        840,
                         80,
                         30,
                         hwnd,
@@ -1010,6 +1048,7 @@ mod windows_settings {
                                     .to_string();
                             state.config.cloud.llm_reasoning_effort =
                                 get_text(state.llm_reasoning_effort_edit);
+                            state.config.cloud.llm_prompt = get_text(state.llm_prompt_edit);
                             state.config.hotkey.combo_key = get_text(state.combo_edit);
                             if let Err(error) = state.manager.reconfigure(&state.config.hotkey) {
                                 let message = wide(&format!("快捷键设置无效：{}", error));
