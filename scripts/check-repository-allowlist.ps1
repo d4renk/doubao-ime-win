@@ -17,6 +17,8 @@ $allowedPatterns = @(
     '^PRD/.+\.md$',
     '^assets/[^/]+\.png$',
     '^examples/[^/]+\.rs$',
+    '^frontend/(?:index\.html|package(?:-lock)?\.json|tsconfig\.json)$',
+    '^frontend/src/.+\.(?:ts|css)$',
     '^proto/[^/]+\.proto$',
     '^scripts/[^/]+\.ps1$',
     '^src/.+\.rs$',
