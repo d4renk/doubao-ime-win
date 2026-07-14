@@ -256,6 +256,9 @@ pub struct CloudConfig {
     /// Remove filler speech after a voice session and auto-replace on success.
     #[serde(default = "default_true")]
     pub auto_polish_enabled: bool,
+    /// Include text surrounding the target caret as LLM correction context.
+    #[serde(default)]
+    pub llm_context_enabled: bool,
     /// OpenAI-compatible Chat Completions URL. Empty keeps the built-in service.
     #[serde(default)]
     pub llm_base_url: String,
@@ -281,6 +284,7 @@ impl Default for CloudConfig {
         Self {
             ner_enabled: true,
             auto_polish_enabled: true,
+            llm_context_enabled: false,
             llm_base_url: String::new(),
             llm_api_key: String::new(),
             llm_model: String::new(),
@@ -352,6 +356,7 @@ mod tests {
         assert_eq!(config.asr.post_ratio_gain, 1.0);
         assert!(config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
+        assert!(!config.cloud.llm_context_enabled);
         assert!(config.cloud.llm_prompt.is_empty());
         assert_eq!(config.cloud.llm_thinking_mode, "omit");
     }
@@ -374,6 +379,7 @@ mod tests {
 
         assert!(!config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
+        assert!(!config.cloud.llm_context_enabled);
         assert!(config.cloud.llm_prompt.is_empty());
         assert_eq!(config.cloud.llm_thinking_mode, "omit");
     }
@@ -388,6 +394,7 @@ mod tests {
         config.asr.post_ratio_gain = 1.25;
         config.cloud.ner_enabled = false;
         config.cloud.auto_polish_enabled = false;
+        config.cloud.llm_context_enabled = true;
         config.cloud.llm_base_url = "https://example.com/v1/chat/completions".to_string();
         config.cloud.llm_api_key = "secret".to_string();
         config.cloud.llm_model = "example-model".to_string();
@@ -405,6 +412,7 @@ mod tests {
         assert_eq!(restored.asr.post_ratio_gain, 1.25);
         assert!(!restored.cloud.ner_enabled);
         assert!(!restored.cloud.auto_polish_enabled);
+        assert!(restored.cloud.llm_context_enabled);
         assert_eq!(
             restored.cloud.llm_base_url,
             "https://example.com/v1/chat/completions"

@@ -12,7 +12,8 @@ use crate::asr::{AsrClient, ResponseType};
 use crate::audio::AudioCapture;
 use crate::business::punctuation::{format_transcript, TranscriptBoundary};
 use crate::business::{
-    capture_context, ContextSnapshot, TextInserter, VoiceSessionRecord, VoiceSessionStore,
+    capture_context, ContextSnapshot, TargetWindow, TextInserter, VoiceSessionRecord,
+    VoiceSessionStore,
 };
 use crate::cloud::{NerClient, NerLexicon, RichChatClient, RichChatInput};
 use crate::data::{AppConfig, AudioProcessingConfig, PunctuationMode};
@@ -119,13 +120,21 @@ impl VoiceController {
         let punctuation_mode = asr_config.punctuation_mode;
         let ner_enabled = config.cloud.ner_enabled;
         let auto_polish_enabled = config.cloud.auto_polish_enabled;
+        let llm_context_enabled = config.cloud.llm_context_enabled;
         let session_generation = self
             .cloud
             .as_ref()
             .map(|cloud| cloud.sessions.begin_session())
             .unwrap_or_default();
         let context = if auto_polish_enabled && self.cloud.is_some() {
-            capture_context()
+            if llm_context_enabled {
+                capture_context()
+            } else {
+                ContextSnapshot {
+                    target: TargetWindow::capture_foreground(),
+                    ..ContextSnapshot::default()
+                }
+            }
         } else {
             ContextSnapshot::default()
         };
