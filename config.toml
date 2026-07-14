@@ -23,7 +23,6 @@ raw_vk_code = 0
 raw_scan_code = 0
 raw_extended = false
 # 非标准按键触发方式: "toggle" (按下切换) 或 "hold" (按住说话)
-raw_trigger = "toggle"
 
 [floating_button]
 # 是否显示悬浮按钮
@@ -51,3 +50,5 @@ punctuation_mode = "smart"
 ner_enabled = true
 # 会话结束后流式校正口水词、明显同音词和语序；10 秒内收到完整结果则自动一次性替换
 auto_polish_enabled = true
+# false 使用内置豆包 Scene 5 润色；true 使用下方自定义 OpenAI 兼容 API
+llm_custom_api_enabled = false

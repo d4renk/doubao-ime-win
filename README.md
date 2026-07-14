@@ -48,7 +48,6 @@ Windows 语音输入工具，基于豆包 ASR 实现实时语音识别。
 打开托盘菜单的“设置...”，点击“录入非标准按键”，然后按下目标按键。录入成功后选择“使用非标准按键”并保存。
 
 - **按下切换**：每次按键在开始和停止之间切换。
-- **按住说话**：按下开始录音，松开停止录音。
 - 非标准按键监听只适用于 Windows；程序会保留该按键原有动作，因此小爱同学可能仍会同时响应。
 - 也可以直接在 `config.toml` 的 `[hotkey]` 中填写 `binding = "raw"` 及 `raw_vk_code`、`raw_scan_code`、`raw_extended`。
 
@@ -131,7 +130,6 @@ double_tap_interval = 300  # 毫秒
 raw_vk_code = 0
 raw_scan_code = 0
 raw_extended = false
-raw_trigger = "toggle"  # "toggle" 或 "hold"
 
 [floating_button]
 enabled = true
@@ -149,9 +147,10 @@ punctuation_mode = "smart"  # "smart", "spaces", "no_sentence_final", "preserve"
 [cloud]
 ner_enabled = true  # 异步上传 ASR final，用于后续上下文和候选优化
 auto_polish_enabled = true  # 会话结束后流式校正，10 秒内完成则自动一次性替换
+llm_custom_api_enabled = false  # false 使用内置豆包 Scene 5；true 使用自定义 OpenAI 兼容 API
 ```
 
-启用云端增强时，最终识别文本会发送到兼容服务。NER 响应不会修改或展示在当前输入框中；LLM 会删除口水词，并在语义高度明确时结合前后文纠正同音/近音误识别和明显语序问题。响应以 SSE 流式接收，delta 仅在内存中聚合；10 秒内收到完整结果时自动一次性替换 ASR 原文，超时或失败时保留原文。可在设置窗口或 `[cloud]` 配置中分别关闭这两项上传。
+启用云端增强时，最终识别文本会发送到兼容服务。NER 响应不会修改或展示在当前输入框中；LLM 会删除口水词，并在语义高度明确时结合前后文纠正同音/近音误识别和明显语序问题。默认使用项目已有的豆包输入法 `scene=5` 润色接口和本机注册产生的设备凭据，不需要用户 API Key；开启“使用自定义 API”后才会改用用户填写的 OpenAI 兼容 URL、API Key 和模型。响应以 SSE 流式接收，delta 仅在内存中聚合；10 秒内收到完整结果时自动一次性替换 ASR 原文，超时或失败时保留原文。
 
 ## 日志导出
 

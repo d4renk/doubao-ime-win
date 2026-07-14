@@ -22,8 +22,7 @@ double_tap_interval = 300
 raw_vk_code = 0
 raw_scan_code = 0
 raw_extended = false
-# 非标准按键触发方式: "toggle" (按下切换) 或 "hold" (按住说话)
-raw_trigger = "toggle"
+# 非标准按键按下时切换录音状态
 
 [floating_button]
 # 是否显示悬浮按钮
@@ -51,3 +50,11 @@ punctuation_mode = "smart"
 ner_enabled = true
 # 会话结束后流式校正口水词、明显同音词和语序；10 秒内收到完整结果则自动一次性替换
 auto_polish_enabled = true
+# 是否使用自定义 OpenAI 兼容 API；false 使用内置豆包 Scene 5 润色和本机设备凭据
+llm_custom_api_enabled = false
+# 仅在 llm_custom_api_enabled = true 时使用以下连接和推理参数
+llm_base_url = ""
+llm_api_key = ""
+llm_model = ""
+llm_thinking_mode = "omit" # "omit", "disabled", "enabled"
+llm_reasoning_effort = "" # "", "low", "medium", "high"

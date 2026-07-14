@@ -111,9 +111,6 @@ pub struct HotkeyConfig {
     /// Whether the captured raw key has the extended-key flag.
     #[serde(default)]
     pub raw_extended: bool,
-    /// Raw binding behavior: `toggle` or `hold`.
-    #[serde(default = "default_raw_trigger")]
-    pub raw_trigger: String,
 }
 
 fn default_hotkey_binding() -> String {
@@ -136,10 +133,6 @@ fn default_double_tap_interval() -> u64 {
     300
 }
 
-fn default_raw_trigger() -> String {
-    "toggle".to_string()
-}
-
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
@@ -151,7 +144,6 @@ impl Default for HotkeyConfig {
             raw_vk_code: 0,
             raw_scan_code: 0,
             raw_extended: false,
-            raw_trigger: default_raw_trigger(),
         }
     }
 }
@@ -259,6 +251,10 @@ pub struct CloudConfig {
     /// Include text surrounding the target caret as LLM correction context.
     #[serde(default)]
     pub llm_context_enabled: bool,
+    /// Explicitly select the custom OpenAI-compatible backend. `None` keeps
+    /// compatibility with older configs, where a non-empty URL enabled it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_custom_api_enabled: Option<bool>,
     /// OpenAI-compatible Chat Completions URL. Empty keeps the built-in service.
     #[serde(default)]
     pub llm_base_url: String,
@@ -285,6 +281,7 @@ impl Default for CloudConfig {
             ner_enabled: true,
             auto_polish_enabled: true,
             llm_context_enabled: false,
+            llm_custom_api_enabled: Some(false),
             llm_base_url: String::new(),
             llm_api_key: String::new(),
             llm_model: String::new(),
@@ -292,6 +289,15 @@ impl Default for CloudConfig {
             llm_thinking_mode: default_llm_thinking_mode(),
             llm_reasoning_effort: String::new(),
         }
+    }
+}
+
+impl CloudConfig {
+    /// Resolve the backend while preserving configs written before the
+    /// explicit custom-API switch was introduced.
+    pub fn custom_api_enabled(&self) -> bool {
+        self.llm_custom_api_enabled
+            .unwrap_or_else(|| !self.llm_base_url.trim().is_empty())
     }
 }
 
@@ -357,8 +363,29 @@ mod tests {
         assert!(config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
         assert!(!config.cloud.llm_context_enabled);
+        assert!(!config.cloud.custom_api_enabled());
         assert!(config.cloud.llm_prompt.is_empty());
         assert_eq!(config.cloud.llm_thinking_mode, "omit");
+    }
+
+    #[test]
+    fn legacy_raw_trigger_is_ignored_without_losing_vendor_key() {
+        let config: AppConfig = toml::from_str(
+            r#"
+                [hotkey]
+                binding = "raw"
+                raw_vk_code = 183
+                raw_scan_code = 110
+                raw_extended = true
+                raw_trigger = "hold"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.hotkey.raw_vk_code, 183);
+        assert_eq!(config.hotkey.raw_scan_code, 110);
+        assert!(config.hotkey.raw_extended);
+        assert!(!toml::to_string(&config).unwrap().contains("raw_trigger"));
     }
 
     #[test]
@@ -380,6 +407,7 @@ mod tests {
         assert!(!config.cloud.ner_enabled);
         assert!(config.cloud.auto_polish_enabled);
         assert!(!config.cloud.llm_context_enabled);
+        assert!(!config.cloud.custom_api_enabled());
         assert!(config.cloud.llm_prompt.is_empty());
         assert_eq!(config.cloud.llm_thinking_mode, "omit");
     }
@@ -395,6 +423,7 @@ mod tests {
         config.cloud.ner_enabled = false;
         config.cloud.auto_polish_enabled = false;
         config.cloud.llm_context_enabled = true;
+        config.cloud.llm_custom_api_enabled = Some(true);
         config.cloud.llm_base_url = "https://example.com/v1/chat/completions".to_string();
         config.cloud.llm_api_key = "secret".to_string();
         config.cloud.llm_model = "example-model".to_string();
@@ -413,6 +442,7 @@ mod tests {
         assert!(!restored.cloud.ner_enabled);
         assert!(!restored.cloud.auto_polish_enabled);
         assert!(restored.cloud.llm_context_enabled);
+        assert!(restored.cloud.custom_api_enabled());
         assert_eq!(
             restored.cloud.llm_base_url,
             "https://example.com/v1/chat/completions"
@@ -422,6 +452,29 @@ mod tests {
         assert_eq!(restored.cloud.llm_prompt, "只删除口头语。");
         assert_eq!(restored.cloud.llm_thinking_mode, "enabled");
         assert_eq!(restored.cloud.llm_reasoning_effort, "high");
+    }
+
+    #[test]
+    fn legacy_custom_url_enables_custom_api_but_explicit_switch_wins() {
+        let legacy: AppConfig = toml::from_str(
+            r#"
+                [cloud]
+                llm_base_url = "https://example.com/v1/chat/completions"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(legacy.cloud.llm_custom_api_enabled, None);
+        assert!(legacy.cloud.custom_api_enabled());
+
+        let explicitly_builtin: AppConfig = toml::from_str(
+            r#"
+                [cloud]
+                llm_custom_api_enabled = false
+                llm_base_url = "https://example.com/v1/chat/completions"
+            "#,
+        )
+        .unwrap();
+        assert!(!explicitly_builtin.cloud.custom_api_enabled());
     }
 
     #[test]

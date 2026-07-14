@@ -24,10 +24,6 @@ use crate::data::HotkeyConfig;
 pub enum HotkeyEvent {
     /// Toggle recording once.
     Toggle,
-    /// Start a press-and-hold recording.
-    Press,
-    /// Stop a press-and-hold recording.
-    Release,
 }
 
 /// Identity of a Windows raw keyboard event.
@@ -284,10 +280,7 @@ fn validate_config(config: &HotkeyConfig) -> Result<()> {
         if config.raw_vk_code == 0 {
             return Err(anyhow!("Raw binding requires a non-zero virtual-key code"));
         }
-        match config.raw_trigger.to_lowercase().as_str() {
-            "toggle" | "hold" => Ok(()),
-            other => Err(anyhow!("Unknown raw trigger mode: {}", other)),
-        }
+        Ok(())
     } else {
         let _ = configured_standard_hotkey(config)?;
         Ok(())
@@ -346,7 +339,6 @@ fn run_raw_key_hook(
         is_active: Arc<AtomicBool>,
         callback: Arc<dyn Fn(HotkeyEvent) + Send + Sync>,
         pressed: Option<RawKeyBinding>,
-        hold_active: bool,
         last_modifier_release: Option<Instant>,
         capture_sender: Arc<Mutex<Option<mpsc::Sender<RawKeyBinding>>>>,
     }
@@ -361,7 +353,6 @@ fn run_raw_key_hook(
             is_active,
             callback,
             pressed: None,
-            hold_active: false,
             last_modifier_release: None,
             capture_sender,
         });
@@ -413,10 +404,6 @@ fn run_raw_key_hook(
                         if is_up {
                             if hook.pressed == Some(identity) {
                                 hook.pressed = None;
-                                if hook.hold_active {
-                                    hook.hold_active = false;
-                                    (hook.callback)(HotkeyEvent::Release);
-                                }
                             }
                             if modifier_matches {
                                 let now = Instant::now();
@@ -432,12 +419,7 @@ fn run_raw_key_hook(
                             }
                         } else if raw_matches && hook.pressed.is_none() {
                             hook.pressed = Some(identity);
-                            if config.raw_trigger.eq_ignore_ascii_case("hold") {
-                                hook.hold_active = true;
-                                (hook.callback)(HotkeyEvent::Press);
-                            } else {
-                                (hook.callback)(HotkeyEvent::Toggle);
-                            }
+                            (hook.callback)(HotkeyEvent::Toggle);
                         }
                     }
                 });
@@ -477,19 +459,10 @@ fn run_raw_key_hook(
                         if wparam.0 as u32 == WM_XBUTTONUP {
                             if hook.pressed == Some(identity) {
                                 hook.pressed = None;
-                                if hook.hold_active {
-                                    hook.hold_active = false;
-                                    (hook.callback)(HotkeyEvent::Release);
-                                }
                             }
                         } else if raw_matches && hook.pressed.is_none() {
                             hook.pressed = Some(identity);
-                            if config.raw_trigger.eq_ignore_ascii_case("hold") {
-                                hook.hold_active = true;
-                                (hook.callback)(HotkeyEvent::Press);
-                            } else {
-                                (hook.callback)(HotkeyEvent::Toggle);
-                            }
+                            (hook.callback)(HotkeyEvent::Toggle);
                         }
                     }
                 });
@@ -668,7 +641,6 @@ mod tests {
     fn default_configuration_uses_standard_binding() {
         let config = HotkeyConfig::default();
         assert_eq!(config.binding, "standard");
-        assert_eq!(config.raw_trigger, "toggle");
     }
 
     #[test]

@@ -34,7 +34,6 @@ mod windows_settings {
     const ID_CAPTURE: usize = 102;
     const ID_STANDARD: usize = 103;
     const ID_RAW: usize = 104;
-    const ID_TRIGGER: usize = 105;
     const ID_SAVE: usize = 106;
     const ID_CANCEL: usize = 107;
     const ID_AUTO_START: usize = 108;
@@ -65,7 +64,6 @@ mod windows_settings {
         combo_edit: HWND,
         status_label: HWND,
         source_label: HWND,
-        trigger_button: HWND,
         auto_start_check: HWND,
         floating_check: HWND,
         vad_check: HWND,
@@ -114,7 +112,6 @@ mod windows_settings {
                 combo_edit: HWND::default(),
                 status_label: HWND::default(),
                 source_label: HWND::default(),
-                trigger_button: HWND::default(),
                 auto_start_check: HWND::default(),
                 floating_check: HWND::default(),
                 vad_check: HWND::default(),
@@ -587,24 +584,6 @@ mod windows_settings {
                         ID_RAW,
                         instance,
                     );
-                    state.trigger_button = create_control(
-                        w!("BUTTON"),
-                        if state.config.hotkey.raw_trigger.eq_ignore_ascii_case("hold") {
-                            w!("触发模式：按住说话")
-                        } else {
-                            w!("触发模式：按下切换")
-                        },
-                        WINDOW_STYLE(
-                            WS_CHILD.0 | WS_VISIBLE.0 | WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
-                        ),
-                        360,
-                        290,
-                        145,
-                        30,
-                        hwnd,
-                        ID_TRIGGER,
-                        instance,
-                    );
                     create_control(
                         w!("STATIC"),
                         w!("语音识别 / Speech Recognition"),
@@ -1029,15 +1008,6 @@ mod windows_settings {
                         ID_RAW => {
                             state.config.hotkey.binding = "raw".to_string();
                             set_text(state.source_label, "当前绑定：非标准原始按键");
-                        }
-                        ID_TRIGGER => {
-                            if state.config.hotkey.raw_trigger.eq_ignore_ascii_case("hold") {
-                                state.config.hotkey.raw_trigger = "toggle".to_string();
-                                set_text(state.trigger_button, "触发模式：按下切换");
-                            } else {
-                                state.config.hotkey.raw_trigger = "hold".to_string();
-                                set_text(state.trigger_button, "触发模式：按住说话");
-                            }
                         }
                         ID_SAVE => {
                             let previous_config = state.config.clone();

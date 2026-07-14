@@ -168,11 +168,13 @@ impl AsrClient {
 
             tracing::info!("Audio channel closed, sent {} total frames", frame_index);
 
-            if frame_index > 0 {
-                let finish_msg = build_finish_session(&request_id_clone, &token_clone);
-                let _ = write.send(Message::Binary(finish_msg.into())).await;
-                tracing::info!("Sent FinishSession");
-            }
+            // Finish even when capture produced no Opus frame. Otherwise an
+            // empty/silent session remains open and the UI waits indefinitely
+            // for a SessionFinished response which the server was never asked
+            // to produce.
+            let finish_msg = build_finish_session(&request_id_clone, &token_clone);
+            let _ = write.send(Message::Binary(finish_msg.into())).await;
+            tracing::info!("Sent FinishSession");
         });
 
         // Spawn response receiving task

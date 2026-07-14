@@ -93,7 +93,7 @@ async fn run_ui_mode_inner() -> Result<()> {
     let did = credentials.device_id.clone();
     let asr_client = Arc::new(AsrClient::new(credentials));
     let ner_client = Arc::new(NerClient::new(did.clone())?);
-    let rich_chat_client = Arc::new(RichChatClient::new(did, &config.cloud)?);
+    let rich_chat_client = Arc::new(RichChatClient::new(did.clone(), &config.cloud)?);
     let ner_lexicon = Arc::new(StdMutex::new(NerLexicon::new()));
     let voice_sessions = Arc::new(VoiceSessionStore::new());
 
@@ -122,7 +122,7 @@ async fn run_ui_mode_inner() -> Result<()> {
 
     // Run system tray (hotkey callback is set up inside run_app for state sync)
     info!("Starting system tray...");
-    doubao_voice_input::ui::run_app(config, voice_controller, hotkey_manager, audio_capture)?;
+    doubao_voice_input::ui::run_app(config, did, voice_controller, hotkey_manager, audio_capture)?;
 
     info!("Application exited");
     Ok(())

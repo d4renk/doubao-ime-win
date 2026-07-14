@@ -26,6 +26,7 @@ use wry::{http::Response, PageLoadEvent, WebContext, WebView, WebViewBuilder};
 use crate::{
     audio::AudioCapture,
     business::{HotkeyEvent, HotkeyManager, RawKeyBinding, VoiceController},
+    cloud::RichChatClient,
     data::AppConfig,
 };
 
@@ -60,7 +61,10 @@ enum IpcCommand {
     GetVoiceState,
     StartRecording,
     StopRecording,
+    GetSettingsWindowState,
     DragSettings,
+    MinimizeSettings,
+    ToggleSettingsMaximize,
     HideSettings,
     DragHud,
 }
@@ -68,6 +72,7 @@ enum IpcCommand {
 /// Runs the UI shell on the main thread. Audio and network work remain on Tokio.
 pub fn run_app(
     config: AppConfig,
+    device_id: String,
     voice_controller: Arc<Mutex<VoiceController>>,
     hotkey_manager: HotkeyManager,
     audio_capture: Arc<AudioCapture>,
@@ -152,12 +157,10 @@ pub fn run_app(
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16));
         match event {
             Event::UserEvent(command) => match command {
-                UserEvent::Ipc(command) => handle_ipc(command, &settings_webview, &hud_webview, &settings_window, &proxy, &hotkey_manager, &runtime, voice_controller.clone(), &mut state, &hud_window),
+                UserEvent::Ipc(command) => handle_ipc(command, &settings_webview, &hud_webview, &settings_window, &proxy, &hotkey_manager, &runtime, voice_controller.clone(), &device_id, &mut state, &hud_window),
                 UserEvent::Hotkey(HotkeyEvent::Toggle) => {
                     if matches!(state, VoiceState::Recording) { let _ = proxy.send_event(UserEvent::Stop); } else { let _ = proxy.send_event(UserEvent::Start); }
                 }
-                UserEvent::Hotkey(HotkeyEvent::Press) => { let _ = proxy.send_event(UserEvent::Start); }
-                UserEvent::Hotkey(HotkeyEvent::Release) => { let _ = proxy.send_event(UserEvent::Stop); }
                 UserEvent::Start => start_recording(voice_controller.clone(), runtime.clone(), proxy.clone()),
                 UserEvent::Stop => stop_recording(voice_controller.clone(), runtime.clone(), proxy.clone()),
                 UserEvent::SetState(next) => {
@@ -173,7 +176,10 @@ pub fn run_app(
                 while let Ok(menu_event) = menu_rx.try_recv() {
                     if menu_event.id == start_id { let _ = proxy.send_event(UserEvent::Start); }
                     else if menu_event.id == stop_id { let _ = proxy.send_event(UserEvent::Stop); }
-                    else if menu_event.id == settings_id { settings_window.set_visible(true); }
+                    else if menu_event.id == settings_id {
+                        settings_window.set_minimized(false);
+                        settings_window.set_visible(true);
+                    }
                     else if menu_event.id == logs_id {
                         if let Err(error) = open_logs_directory() {
                             tracing::error!("Unable to open log directory: {error:#}");
@@ -188,6 +194,9 @@ pub fn run_app(
             }
             Event::WindowEvent { window_id, event: WindowEvent::Moved(position), .. } if window_id == hud_id_window => {
                 if let Ok(mut current) = AppConfig::load_or_default() { current.floating_button.position_x = position.x; current.floating_button.position_y = position.y; let _ = current.save(); }
+            }
+            Event::WindowEvent { window_id, event: WindowEvent::Resized(_), .. } if window_id == settings_id_window => {
+                send_settings_window_state(&settings_webview, &settings_window);
             }
             Event::WindowEvent { window_id, event: WindowEvent::CloseRequested, .. } if window_id == settings_id_window => settings_window.set_visible(false),
             Event::WindowEvent { window_id, event: WindowEvent::CloseRequested, .. } if window_id == hud_id_window => { let _ = proxy.send_event(UserEvent::Stop); },
@@ -206,6 +215,7 @@ fn handle_ipc(
     hotkeys: &HotkeyManager,
     runtime: &tokio::runtime::Handle,
     controller: Arc<Mutex<VoiceController>>,
+    device_id: &str,
     state: &mut VoiceState,
     hud_window: &Window,
 ) {
@@ -218,12 +228,26 @@ fn handle_ipc(
             Err(error) => send_error(settings, error),
         },
         IpcCommand::SaveConfig(config) => {
+            let rich_chat_client = match RichChatClient::new(device_id.to_owned(), &config.cloud) {
+                Ok(client) => Arc::new(client),
+                Err(error) => {
+                    send_error(settings, error);
+                    return;
+                }
+            };
             if let Err(error) = hotkeys
                 .reconfigure(&config.hotkey)
                 .and_then(|_| config.save())
             {
                 send_error(settings, error);
             } else {
+                let controller = controller.clone();
+                runtime.spawn(async move {
+                    controller
+                        .lock()
+                        .await
+                        .reconfigure_rich_chat(rich_chat_client);
+                });
                 send_event(
                     settings,
                     &serde_json::json!({"type":"config", "config":config}),
@@ -246,6 +270,7 @@ fn handle_ipc(
             }
         }
         IpcCommand::ShowSettings => {
+            settings_window.set_minimized(false);
             settings_window.set_visible(true);
         }
         IpcCommand::GetVoiceState => send_event(
@@ -254,8 +279,18 @@ fn handle_ipc(
         ),
         IpcCommand::StartRecording => start_recording(controller, runtime.clone(), proxy.clone()),
         IpcCommand::StopRecording => stop_recording(controller, runtime.clone(), proxy.clone()),
+        IpcCommand::GetSettingsWindowState => {
+            send_settings_window_state(settings, settings_window);
+        }
         IpcCommand::DragSettings => {
             let _ = settings_window.drag_window();
+        }
+        IpcCommand::MinimizeSettings => {
+            settings_window.set_minimized(true);
+        }
+        IpcCommand::ToggleSettingsMaximize => {
+            settings_window.set_maximized(!settings_window.is_maximized());
+            send_settings_window_state(settings, settings_window);
         }
         IpcCommand::HideSettings => {
             settings_window.set_visible(false);
@@ -347,7 +382,10 @@ fn parse_ipc(message: &str) -> Result<IpcCommand> {
         Some("get_voice_state") => Ok(IpcCommand::GetVoiceState),
         Some("start_recording") => Ok(IpcCommand::StartRecording),
         Some("stop_recording") => Ok(IpcCommand::StopRecording),
+        Some("get_settings_window_state") => Ok(IpcCommand::GetSettingsWindowState),
         Some("drag_settings") => Ok(IpcCommand::DragSettings),
+        Some("minimize_settings") => Ok(IpcCommand::MinimizeSettings),
+        Some("toggle_settings_maximize") => Ok(IpcCommand::ToggleSettingsMaximize),
         Some("hide_settings") => Ok(IpcCommand::HideSettings),
         Some("drag_hud") => Ok(IpcCommand::DragHud),
         Some("save_config") => Ok(IpcCommand::SaveConfig(serde_json::from_value(
@@ -425,6 +463,13 @@ fn send_error(webview: &WebView, error: impl std::fmt::Display) {
     send_event(
         webview,
         &serde_json::json!({"type":"error", "message":error.to_string()}),
+    );
+}
+
+fn send_settings_window_state(webview: &WebView, window: &Window) {
+    send_event(
+        webview,
+        &serde_json::json!({"type":"window_state", "maximized":window.is_maximized()}),
     );
 }
 

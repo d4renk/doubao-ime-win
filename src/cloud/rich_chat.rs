@@ -63,24 +63,26 @@ impl RichChatClient {
         endpoints: CloudEndpoints,
     ) -> Result<Self, CloudError> {
         let did = did.into();
-        if did.trim().is_empty() && config.llm_base_url.trim().is_empty() {
+        let custom_api_enabled = config.custom_api_enabled();
+        if did.trim().is_empty() && !custom_api_enabled {
             return Err(CloudError::InvalidResponse("device id is empty".into()));
         }
-        let backend = if config.llm_base_url.trim().is_empty() {
+        let backend = if !custom_api_enabled {
             RichChatBackend::Doubao {
                 endpoints,
                 did: Arc::from(did),
             }
         } else {
+            let url = config.llm_base_url.trim();
             let api_key = config.llm_api_key.trim();
             let model = config.llm_model.trim();
-            if api_key.is_empty() || model.is_empty() {
+            if url.is_empty() || api_key.is_empty() || model.is_empty() {
                 return Err(CloudError::InvalidResponse(
-                    "custom OpenAI LLM requires both API key and model".into(),
+                    "custom OpenAI-compatible LLM requires URL, API key, and model".into(),
                 ));
             }
             RichChatBackend::OpenAi(OpenAiConfig {
-                url: Arc::from(config.llm_base_url.trim()),
+                url: Arc::from(url),
                 api_key: Arc::from(api_key),
                 model: Arc::from(model),
                 thinking_mode: normalize_thinking_mode(&config.llm_thinking_mode).map(Arc::from),
@@ -428,6 +430,40 @@ fn parse_content(data: &str) -> Result<String, CloudError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_http_client() -> Client {
+        Client::builder().build().unwrap()
+    }
+
+    #[test]
+    fn explicit_builtin_mode_ignores_stored_custom_credentials() {
+        let config = CloudConfig {
+            llm_custom_api_enabled: Some(false),
+            llm_base_url: "https://example.com/v1/chat/completions".into(),
+            llm_api_key: "secret".into(),
+            llm_model: "example-model".into(),
+            ..CloudConfig::default()
+        };
+        let client = RichChatClient::with_client(
+            test_http_client(),
+            "device-id",
+            &config,
+            CloudEndpoints::default(),
+        )
+        .unwrap();
+        assert!(matches!(client.backend, RichChatBackend::Doubao { .. }));
+    }
+
+    #[test]
+    fn custom_mode_requires_complete_connection_settings() {
+        let config = CloudConfig {
+            llm_custom_api_enabled: Some(true),
+            ..CloudConfig::default()
+        };
+        let result =
+            RichChatClient::with_client(test_http_client(), "", &config, CloudEndpoints::default());
+        assert!(matches!(result, Err(CloudError::InvalidResponse(_))));
+    }
 
     #[test]
     fn completed_content_wins_over_deltas() {

@@ -19,6 +19,7 @@ use crate::cloud::{NerClient, NerLexicon, RichChatClient, RichChatInput};
 use crate::data::{AppConfig, AudioProcessingConfig, PunctuationMode};
 
 const ASR_SESSION_FINISH_TIMEOUT: Duration = Duration::from_secs(30);
+const EMPTY_ASR_SESSION_FINISH_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 struct CloudRuntime {
@@ -35,6 +36,7 @@ pub struct VoiceController {
     text_inserter: Arc<TextInserter>,
     is_recording: Arc<AtomicBool>,
     finish_requested: Arc<AtomicBool>,
+    session_has_text: Arc<AtomicBool>,
     result_task: Option<JoinHandle<()>>,
     polish_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
     cloud: Option<CloudRuntime>,
@@ -53,6 +55,7 @@ impl VoiceController {
             text_inserter,
             is_recording: Arc::new(AtomicBool::new(false)),
             finish_requested: Arc::new(AtomicBool::new(false)),
+            session_has_text: Arc::new(AtomicBool::new(false)),
             result_task: None,
             polish_task: Arc::new(StdMutex::new(None)),
             cloud: None,
@@ -73,6 +76,13 @@ impl VoiceController {
             sessions,
         });
         self
+    }
+
+    /// Replace the text-polishing backend after settings are saved.
+    pub fn reconfigure_rich_chat(&mut self, rich_chat_client: Arc<RichChatClient>) {
+        if let Some(cloud) = self.cloud.as_mut() {
+            cloud.rich_chat_client = rich_chat_client;
+        }
     }
 
     /// Check if currently recording
@@ -113,6 +123,7 @@ impl VoiceController {
 
         tracing::info!("Starting voice input...");
         self.finish_requested.store(false, Ordering::SeqCst);
+        self.session_has_text.store(false, Ordering::SeqCst);
         let config = AppConfig::load_or_default()?;
         let asr_config = config.asr;
         let audio_quality = asr_config.audio_quality;
@@ -165,6 +176,7 @@ impl VoiceController {
         let text_inserter = self.text_inserter.clone();
         let is_recording = self.is_recording.clone();
         let finish_requested = self.finish_requested.clone();
+        let session_has_text = self.session_has_text.clone();
         let audio_capture = self.audio_capture.clone();
         let cloud = self.cloud.clone();
         let polish_task = self.polish_task.clone();
@@ -181,6 +193,9 @@ impl VoiceController {
 
             while let Some(response) = result_rx.recv().await {
                 response_count += 1;
+                if !response.text.trim().is_empty() {
+                    session_has_text.store(true, Ordering::SeqCst);
+                }
                 match response.response_type {
                     ResponseType::InterimResult => {
                         tracing::debug!(
@@ -325,26 +340,50 @@ impl VoiceController {
         self.audio_capture.stop();
 
         if let Some(mut result_task) = self.result_task.take() {
-            match tokio::time::timeout(ASR_SESSION_FINISH_TIMEOUT, &mut result_task).await {
-                Ok(Ok(())) => {
-                    tracing::info!("Final ASR result processing completed");
-                }
-                Ok(Err(error)) => {
-                    tracing::warn!("ASR result task failed: {}", error);
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        "Timed out after {:?} waiting for ASR SessionFinished",
-                        ASR_SESSION_FINISH_TIMEOUT
-                    );
-                    result_task.abort();
-                    let _ = result_task.await;
+            let started_without_text = !self.session_has_text.load(Ordering::SeqCst);
+            let mut finish_timeout = asr_finish_timeout(!started_without_text);
+            loop {
+                match tokio::time::timeout(finish_timeout, &mut result_task).await {
+                    Ok(Ok(())) => {
+                        tracing::info!("Final ASR result processing completed");
+                        break;
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!("ASR result task failed: {}", error);
+                        break;
+                    }
+                    Err(_)
+                        if finish_timeout == EMPTY_ASR_SESSION_FINISH_TIMEOUT
+                            && self.session_has_text.load(Ordering::SeqCst) =>
+                    {
+                        tracing::info!(
+                            "ASR text arrived during empty-session grace period; extending finalization"
+                        );
+                        finish_timeout = ASR_SESSION_FINISH_TIMEOUT;
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            "Timed out after {:?} waiting for ASR SessionFinished",
+                            finish_timeout
+                        );
+                        result_task.abort();
+                        let _ = result_task.await;
+                        break;
+                    }
                 }
             }
         }
 
         self.is_recording.store(false, Ordering::SeqCst);
         Ok(())
+    }
+}
+
+fn asr_finish_timeout(has_text: bool) -> Duration {
+    if has_text {
+        ASR_SESSION_FINISH_TIMEOUT
+    } else {
+        EMPTY_ASR_SESSION_FINISH_TIMEOUT
     }
 }
 
@@ -462,4 +501,16 @@ fn update_text(text_inserter: &TextInserter, old_text: &str, new_text: &str) -> 
         text_to_append
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{asr_finish_timeout, ASR_SESSION_FINISH_TIMEOUT, EMPTY_ASR_SESSION_FINISH_TIMEOUT};
+
+    #[test]
+    fn empty_asr_session_has_a_short_finish_budget() {
+        assert_eq!(asr_finish_timeout(false), EMPTY_ASR_SESSION_FINISH_TIMEOUT);
+        assert_eq!(asr_finish_timeout(true), ASR_SESSION_FINISH_TIMEOUT);
+        assert!(EMPTY_ASR_SESSION_FINISH_TIMEOUT < ASR_SESSION_FINISH_TIMEOUT);
+    }
 }
