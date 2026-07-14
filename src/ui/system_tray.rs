@@ -5,6 +5,7 @@ use rust_embed::RustEmbed;
 use serde::Serialize;
 use std::{
     borrow::Cow,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -20,7 +21,7 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     TrayIconBuilder,
 };
-use wry::{http::Response, WebView, WebViewBuilder};
+use wry::{http::Response, PageLoadEvent, WebContext, WebView, WebViewBuilder};
 
 use crate::{
     audio::AudioCapture,
@@ -91,8 +92,20 @@ pub fn run_app(
     hud_window.set_visible(false);
     set_hud_no_activate(&hud_window);
 
-    let settings_webview = build_webview(&settings_window, false, proxy.clone())?;
-    let hud_webview = build_webview(&hud_window, true, proxy.clone())?;
+    let webview_data_dir = webview_data_directory();
+    std::fs::create_dir_all(&webview_data_dir).map_err(|error| {
+        anyhow!(
+            "Unable to create WebView2 data directory {}: {error}",
+            webview_data_dir.display()
+        )
+    })?;
+    tracing::info!(
+        "Using WebView2 data directory: {}",
+        webview_data_dir.display()
+    );
+    let mut web_context = WebContext::new(Some(webview_data_dir));
+    let settings_webview = build_webview(&settings_window, false, proxy.clone(), &mut web_context)?;
+    let hud_webview = build_webview(&hud_window, true, proxy.clone(), &mut web_context)?;
 
     let menu = Menu::new();
     let start_item = MenuItem::new("开始语音输入", true, None);
@@ -259,16 +272,34 @@ fn stop_recording(
     });
 }
 
-fn build_webview(window: &Window, hud: bool, proxy: EventLoopProxy<UserEvent>) -> Result<WebView> {
+fn webview_data_directory() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("DoubaoVoiceInput")
+        .join("WebView2")
+}
+
+fn build_webview(
+    window: &Window,
+    hud: bool,
+    proxy: EventLoopProxy<UserEvent>,
+    web_context: &mut WebContext,
+) -> Result<WebView> {
     let url = if hud {
-        "http://doubao.localhost/index.html?view=hud"
+        "doubao://localhost/index.html?view=hud"
     } else {
-        "http://doubao.localhost/index.html"
+        "doubao://localhost/index.html"
     };
-    let builder = WebViewBuilder::new()
+    let view_name = if hud { "HUD" } else { "settings" };
+    let builder = WebViewBuilder::new_with_web_context(web_context)
         .with_transparent(hud)
         .with_custom_protocol("doubao".into(), |_, request| {
             asset_response(request.uri().path())
+        })
+        .with_on_page_load_handler(move |event, url| match event {
+            PageLoadEvent::Started => tracing::debug!("{view_name} page loading: {url}"),
+            PageLoadEvent::Finished => tracing::info!("{view_name} page loaded: {url}"),
         })
         .with_ipc_handler(move |request| match parse_ipc(request.body()) {
             Ok(command) => {
