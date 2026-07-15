@@ -20,6 +20,7 @@ let meter = 0;
 let resizeFrame = 0;
 let lastSize = "";
 let settingsMaximized = false;
+let activeSettingsPage = "general";
 const post = (command: string, params: Record<string, unknown> = {}) => window.ipc?.postMessage(JSON.stringify({ command, params }));
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]!));
 const field = (id: string, label: string, value: unknown, type = "text") => `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" /></label>`;
@@ -48,6 +49,20 @@ function scheduleResize() {
   });
 }
 
+function showSettingsPage(page: string) {
+  const button = Array.from(document.querySelectorAll<HTMLButtonElement>("nav [data-page]"))
+    .find(node => node.dataset.page === page);
+  const section = document.getElementById(page);
+  if (!button || !section?.classList.contains("settings-page")) return;
+  activeSettingsPage = page;
+  document.querySelectorAll("nav [data-page], .settings-page").forEach(node => node.classList.remove("active"));
+  button.classList.add("active");
+  section.classList.add("active");
+  const title = document.querySelector<HTMLElement>("#page-title");
+  if (title) title.textContent = button.textContent?.trim() || "设置";
+  scheduleResize();
+}
+
 function renderSettings() {
   if (!config) { app.innerHTML = `<main class="loading">正在加载设置...</main>`; return; }
   const c = config;
@@ -67,13 +82,7 @@ function renderSettings() {
   document.querySelector("#maximize")?.addEventListener("click", () => post("toggle_settings_maximize"));
   document.querySelectorAll<HTMLButtonElement>("nav [data-page]").forEach(button => button.addEventListener("click", () => {
     const page = button.dataset.page;
-    if (!page) return;
-    document.querySelectorAll("nav [data-page], .settings-page").forEach(node => node.classList.remove("active"));
-    button.classList.add("active");
-    document.querySelector(`#${page}`)?.classList.add("active");
-    const title = document.querySelector<HTMLElement>("#page-title");
-    if (title) title.textContent = button.childNodes[0]?.textContent?.trim() || "设置";
-    scheduleResize();
+    if (page) showSettingsPage(page);
   }));
   document.querySelectorAll<HTMLElement>("[data-window-drag]").forEach(node => node.addEventListener("mousedown", event => {
     if (event.button !== 0 || event.detail > 1 || (event.target as HTMLElement).closest("button, input, select, textarea, label")) return;
@@ -101,6 +110,7 @@ function renderSettings() {
   customApiToggle?.addEventListener("change", updateBackendMode);
   document.querySelector("#test-llm")?.addEventListener("click", testCustomLlm);
   updateBackendMode();
+  showSettingsPage(activeSettingsPage);
   post("get_settings_window_state");
   scheduleResize();
 }
