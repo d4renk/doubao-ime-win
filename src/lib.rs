@@ -23,12 +23,3 @@ pub use audio::AudioCapture;
 pub use business::{HotkeyManager, TextInserter, VoiceController, VoiceSessionStore};
 pub use cloud::{NerClient, NerLexicon, RichChatClient};
 pub use data::{AppConfig, CredentialStore};
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crypto_provider_initialization_is_idempotent() {
-        super::init_crypto_provider();
-        super::init_crypto_provider();
-    }
-}

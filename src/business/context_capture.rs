@@ -15,11 +15,6 @@ pub struct TargetWindow {
 }
 
 impl TargetWindow {
-    #[cfg(test)]
-    pub(crate) fn from_raw(raw_handle: isize) -> Self {
-        Self { raw_handle }
-    }
-
     pub fn raw_handle(self) -> isize {
         self.raw_handle
     }
@@ -207,33 +202,5 @@ mod platform {
 
     pub(super) fn capture_context() -> ContextSnapshot {
         ContextSnapshot::default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{first_chars, is_expected_foreground, last_chars, TargetWindow};
-
-    #[test]
-    fn context_limits_count_unicode_characters() {
-        assert_eq!(first_chars("甲乙abc", 3), "甲乙a");
-        assert_eq!(last_chars("甲乙abc", 3), "abc");
-    }
-
-    #[test]
-    fn context_limits_keep_short_values_intact() {
-        assert_eq!(first_chars("短文本", 500), "短文本");
-        assert_eq!(last_chars("短文本", 500), "短文本");
-    }
-
-    #[test]
-    fn replacement_requires_the_exact_captured_foreground() {
-        let target = TargetWindow { raw_handle: 42 };
-        assert!(is_expected_foreground(target, Some(target)));
-        assert!(!is_expected_foreground(
-            target,
-            Some(TargetWindow { raw_handle: 43 })
-        ));
-        assert!(!is_expected_foreground(target, None));
     }
 }

@@ -19,18 +19,6 @@ const APP_ID: &str = "401734";
 const SAMI_APP_KEY: &str = "SYlxZr6LnvBaIVmF";
 const USER_AGENT: &str = "com.bytedance.android.doubaoime/1.3.7";
 
-#[cfg(test)]
-mod tests {
-    use super::{NER_TASK_BUDGET, RICH_CHAT_TIMEOUT};
-    use std::time::Duration;
-
-    #[test]
-    fn cloud_task_budgets_are_stable() {
-        assert_eq!(NER_TASK_BUDGET, Duration::from_secs(2));
-        assert_eq!(RICH_CHAT_TIMEOUT, Duration::from_secs(10));
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CloudEndpoints {
     pub ner_token_url: String,

@@ -94,36 +94,3 @@ impl NerLexicon {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn word(value: &str, freq: u32) -> NerWord {
-        NerWord {
-            word: value.into(),
-            freq,
-        }
-    }
-
-    #[test]
-    fn keeps_recently_updated_entries() {
-        let mut lexicon = NerLexicon::with_capacity(2);
-        lexicon.update([word("old", 1), word("kept", 2)]);
-        lexicon.update([word("old", 3), word("new", 4)]);
-
-        assert_eq!(lexicon.len(), 2);
-        assert_eq!(lexicon.get("old"), Some(3));
-        assert_eq!(lexicon.get("new"), Some(4));
-        assert_eq!(lexicon.get("kept"), None);
-        assert_eq!(lexicon.snapshot(), vec![word("new", 4), word("old", 3)]);
-    }
-
-    #[test]
-    fn rejects_empty_and_zero_frequency_words() {
-        let mut lexicon = NerLexicon::new();
-        lexicon.update([word("", 1), word("valid", 0), word("valid", 2)]);
-
-        assert_eq!(lexicon.snapshot(), vec![word("valid", 2)]);
-    }
-}

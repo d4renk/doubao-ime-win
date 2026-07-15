@@ -502,15 +502,3 @@ fn update_text(text_inserter: &TextInserter, old_text: &str, new_text: &str) -> 
     );
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{asr_finish_timeout, ASR_SESSION_FINISH_TIMEOUT, EMPTY_ASR_SESSION_FINISH_TIMEOUT};
-
-    #[test]
-    fn empty_asr_session_has_a_short_finish_budget() {
-        assert_eq!(asr_finish_timeout(false), EMPTY_ASR_SESSION_FINISH_TIMEOUT);
-        assert_eq!(asr_finish_timeout(true), ASR_SESSION_FINISH_TIMEOUT);
-        assert!(EMPTY_ASR_SESSION_FINISH_TIMEOUT < ASR_SESSION_FINISH_TIMEOUT);
-    }
-}

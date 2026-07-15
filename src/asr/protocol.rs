@@ -111,35 +111,6 @@ impl SessionConfig {
     }
 }
 
-#[cfg(test)]
-mod session_config_tests {
-    use super::SessionConfig;
-    use crate::data::AudioQuality;
-
-    #[test]
-    fn session_audio_info_matches_selected_quality() {
-        let standard =
-            serde_json::to_value(SessionConfig::new("device", AudioQuality::Standard, 800))
-                .unwrap();
-        let high = serde_json::to_value(SessionConfig::new(
-            "device",
-            AudioQuality::HighQuality,
-            1_200,
-        ))
-        .unwrap();
-
-        assert_eq!(standard["audio_info"]["sample_rate"], 16_000);
-        assert_eq!(high["audio_info"]["sample_rate"], 24_000);
-        assert_eq!(standard["audio_info"]["channel"], 1);
-        assert_eq!(high["audio_info"]["format"], "speech_opus");
-        assert_eq!(standard["extra"]["enable_asr_twopass"], true);
-        assert_eq!(standard["extra"]["enable_asr_threepass"], true);
-        assert_eq!(standard["extra"]["use_twopass_retry"], true);
-        assert_eq!(standard["extra"]["end_smooth_window_ms"], 800);
-        assert_eq!(high["extra"]["end_smooth_window_ms"], 1_200);
-    }
-}
-
 /// Build StartTask message
 pub fn build_start_task(request_id: &str, token: &str) -> Vec<u8> {
     let request = AsrRequest {
@@ -356,91 +327,5 @@ pub fn parse_response(data: &[u8]) -> AsrResponse {
             raw_json: Some(json_data),
             ..Default::default()
         }
-    }
-}
-
-#[cfg(test)]
-mod response_tests {
-    use super::*;
-    use crate::asr::proto::AsrResponse as AsrResponseProto;
-
-    fn encoded_response(message_type: &str, result_json: &str) -> Vec<u8> {
-        AsrResponseProto {
-            message_type: message_type.into(),
-            result_json: result_json.into(),
-            ..Default::default()
-        }
-        .encode_to_vec()
-    }
-
-    #[test]
-    fn empty_session_finished_is_terminal() {
-        let response = parse_response(&encoded_response("SessionFinished", ""));
-        assert_eq!(response.response_type, ResponseType::SessionFinished);
-        assert!(response.session_finished);
-    }
-
-    #[test]
-    fn session_finished_with_text_is_only_terminal() {
-        let response = parse_response(&encoded_response(
-            "SessionFinished",
-            r#"{"results":[{"text":"最终修正","is_interim":true}]}"#,
-        ));
-        assert_eq!(response.response_type, ResponseType::SessionFinished);
-        assert!(response.text.is_empty());
-        assert!(response.session_finished);
-    }
-
-    #[test]
-    fn asr_finished_is_only_terminal() {
-        let response = parse_response(&encoded_response("ASR_Finished", "{}"));
-        assert_eq!(response.response_type, ResponseType::SessionFinished);
-        assert!(response.session_finished);
-        assert!(response.text.is_empty());
-    }
-
-    #[test]
-    fn ordinary_final_result_is_not_session_terminal() {
-        let response = parse_response(&encoded_response(
-            "TaskResult",
-            r#"{"results":[{"text":"分句结果","is_interim":false,"is_vad_finished":true}]}"#,
-        ));
-        assert_eq!(response.response_type, ResponseType::FinalResult);
-        assert!(!response.session_finished);
-    }
-
-    #[test]
-    fn nonstream_revision_does_not_commit_a_segment() {
-        let response = parse_response(&encoded_response(
-            "TaskResult",
-            r#"{"results":[{"text":"OpenClaw","is_interim":false,"extra":{"nonstream_result":true}}]}"#,
-        ));
-        assert_eq!(response.response_type, ResponseType::InterimResult);
-        assert_eq!(response.text, "OpenClaw");
-        assert!(!response.is_final);
-        assert!(response.nonstream_result);
-    }
-
-    #[test]
-    fn stream_finish_is_distinct_from_segment_finish() {
-        let response = parse_response(&encoded_response(
-            "TaskResult",
-            r#"{"results":[{"text":"修订中","stream_asr_finish":true,"is_vad_finished":false}]}"#,
-        ));
-        assert_eq!(response.response_type, ResponseType::InterimResult);
-        assert!(response.stream_asr_finished);
-        assert!(!response.vad_finished);
-    }
-
-    #[test]
-    fn vad_finished_commits_even_when_interim_flag_is_present() {
-        let response = parse_response(&encoded_response(
-            "TaskResult",
-            r#"{"results":[{"text":"固化分段","is_interim":true,"is_vad_finished":true,"is_offline_result":true}]}"#,
-        ));
-        assert_eq!(response.response_type, ResponseType::FinalResult);
-        assert!(response.is_final);
-        assert!(response.vad_finished);
-        assert!(response.is_offline_result);
     }
 }

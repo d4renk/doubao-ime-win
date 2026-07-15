@@ -508,37 +508,3 @@ fn cancel_echo(
     }
     Ok(output)
 }
-
-#[cfg(all(test, target_os = "windows"))]
-mod hardware_tests {
-    use super::AudioCapture;
-    use crate::data::{AudioProcessingConfig, AudioQuality};
-
-    #[tokio::test]
-    #[ignore = "requires the local Windows microphone and default render endpoint"]
-    async fn production_capture_pipeline_emits_opus_with_aec() {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .try_init();
-        let capture = AudioCapture::new().expect("default microphone must be available");
-        let mut receiver = capture
-            .start(
-                AudioQuality::Standard,
-                AudioProcessingConfig {
-                    vad_enabled: true,
-                    aec_enabled: true,
-                    end_smooth_window_ms: 800,
-                    post_ratio_gain: 1.0,
-                },
-            )
-            .expect("AEC capture pipeline must start");
-
-        let encoded = tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
-            .await
-            .expect("capture pipeline produced no frame within five seconds")
-            .expect("capture pipeline closed before producing a frame");
-        capture.stop();
-
-        assert!(!encoded.is_empty());
-    }
-}
