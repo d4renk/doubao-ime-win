@@ -151,7 +151,8 @@ audio_quality = "standard"  # 推荐 "standard" (16kHz)；"high_quality" (24kHz)
 punctuation_mode = "smart"  # "smart", "spaces", "no_sentence_final", "preserve"
 
 [cloud]
-ner_enabled = true  # 异步上传 ASR final，用于后续上下文和候选优化
+ner_enabled = false  # 异步上传 ASR final，用于后续上下文和候选优化
+llm_context_enabled = false  # 读取光标前后的文本作为校正上下文
 auto_polish_enabled = true  # 会话结束后流式校正，10 秒内完成则自动一次性替换
 llm_custom_api_enabled = false  # false 使用内置豆包 Scene 5；true 使用自定义 OpenAI 兼容 API
 ```

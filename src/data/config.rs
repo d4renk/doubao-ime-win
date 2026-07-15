@@ -245,7 +245,7 @@ impl From<&AsrConfig> for AudioProcessingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudConfig {
     /// Send final ASR text to NER for future context and candidate improvement.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub ner_enabled: bool,
     /// Remove filler speech after a voice session and auto-replace on success.
     #[serde(default = "default_true")]
@@ -280,7 +280,7 @@ pub struct CloudConfig {
 impl Default for CloudConfig {
     fn default() -> Self {
         Self {
-            ner_enabled: true,
+            ner_enabled: false,
             auto_polish_enabled: true,
             llm_context_enabled: false,
             llm_custom_api_enabled: Some(false),

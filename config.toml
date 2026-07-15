@@ -47,8 +47,10 @@ punctuation_mode = "smart"
 
 [cloud]
 # 将 ASR final 异步发送给 NER，用于后续上下文和候选优化；不会修改已提交文本
-ner_enabled = true
+ner_enabled = false
 # 会话结束后流式校正口水词、明显同音词和语序；10 秒内收到完整结果则自动一次性替换
 auto_polish_enabled = true
+# 是否读取光标前后的文本作为校正上下文
+llm_context_enabled = false
 # false 使用内置豆包 Scene 5 润色；true 使用下方自定义 OpenAI 兼容 API
 llm_custom_api_enabled = false
