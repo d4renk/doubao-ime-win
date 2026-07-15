@@ -245,12 +245,16 @@ fn handle_ipc(
             Err(error) => send_error(settings, error),
         },
         IpcCommand::SaveConfig(config) => {
-            let rich_chat_client = match RichChatClient::new(device_id.to_owned(), &config.cloud) {
-                Ok(client) => Arc::new(client),
-                Err(error) => {
-                    send_error(settings, error);
-                    return;
+            let rich_chat_client = if config.cloud.auto_polish_enabled {
+                match RichChatClient::new(device_id.to_owned(), &config.cloud) {
+                    Ok(client) => Some(Arc::new(client)),
+                    Err(error) => {
+                        send_error(settings, error);
+                        return;
+                    }
                 }
+            } else {
+                None
             };
             if let Err(error) = hotkeys
                 .reconfigure(&config.hotkey)

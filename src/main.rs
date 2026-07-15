@@ -89,7 +89,12 @@ async fn run_ui_mode_inner() -> Result<()> {
     let did = credentials.device_id.clone();
     let asr_client = Arc::new(AsrClient::new(credentials));
     let ner_client = Arc::new(NerClient::new(did.clone())?);
-    let rich_chat_client = Arc::new(RichChatClient::new(did.clone(), &config.cloud)?);
+    let rich_chat_client = config
+        .cloud
+        .auto_polish_enabled
+        .then(|| RichChatClient::new(did.clone(), &config.cloud))
+        .transpose()?
+        .map(Arc::new);
     let ner_lexicon = Arc::new(StdMutex::new(NerLexicon::new()));
     let voice_sessions = Arc::new(VoiceSessionStore::new());
 

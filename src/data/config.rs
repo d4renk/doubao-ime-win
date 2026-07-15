@@ -248,7 +248,7 @@ pub struct CloudConfig {
     #[serde(default)]
     pub ner_enabled: bool,
     /// Remove filler speech after a voice session and auto-replace on success.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub auto_polish_enabled: bool,
     /// Include text surrounding the target caret as LLM correction context.
     #[serde(default)]
@@ -281,7 +281,7 @@ impl Default for CloudConfig {
     fn default() -> Self {
         Self {
             ner_enabled: false,
-            auto_polish_enabled: true,
+            auto_polish_enabled: false,
             llm_context_enabled: false,
             llm_custom_api_enabled: Some(false),
             llm_base_url: String::new(),

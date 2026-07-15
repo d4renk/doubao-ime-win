@@ -75,7 +75,7 @@ function renderSettings() {
   <section class="settings-page" id="hotkeys"><h2>热键配置</h2><div class="grid two">${select("hotkey_type", "按键类型", hotkeyType, [["standard", "标准按键"], ["raw", "非标准按键"]])}${select("trigger_mode", "触发类型", triggerMode, [["single_tap", "单击"], ["double_tap", "双击"], ["hold", "长按"]])}<div data-hotkey-type="standard">${field("standard_key", "触发按键", standardKey)}</div><div data-trigger-mode="double_tap">${field("double_tap_interval", "双击间隔（毫秒）", c.hotkey.double_tap_interval, "number")}</div></div><div class="row" data-hotkey-type="raw"><button class="secondary" id="capture">录入非标准按键</button><span id="capture-status">${c.hotkey.binding === "raw" ? `已录入：键码 ${c.hotkey.raw_vk_code} / 扫描码 ${c.hotkey.raw_scan_code}` : "可录入小爱键、媒体键等厂商按键"}</span></div></section>
   <section class="settings-page" id="floating"><h2>悬浮窗口</h2><div class="grid two">${toggle("floating_enabled", "启用录音悬浮窗口", c.floating_button.enabled, "录音时显示置顶状态窗口")}<div class="preview"><b>●</b><span><strong>正在聆听</strong><small>实时音频电平</small></span><em></em></div></div></section>
   <section class="settings-page" id="asr"><h2>识别引擎</h2><div class="grid two">${toggle("vad", "本地语音活动检测", c.asr.vad_enabled)}${toggle("aec", "回声消除（实验性）", c.asr.aec_enabled)}${select("audio_quality", "音频质量", c.asr.audio_quality, [["standard", "标准 16 千赫兹"], ["high_quality", "高质量 24 千赫兹"]])}${select("punctuation", "标点模式", c.asr.punctuation_mode, [["smart", "智能标点"], ["spaces", "空格分词"], ["no_sentence_final", "无句末标点"], ["preserve", "保留服务端结果"]])}${field("smooth", "尾音平滑（毫秒）", c.asr.end_smooth_window_ms, "number")}${field("gain", "麦克风增益", c.asr.post_ratio_gain, "number")}</div></section>
-  <section class="settings-page" id="cloud"><h2>云端增强</h2><div class="grid two">${toggle("ner", "实体识别", c.cloud.ner_enabled)}${toggle("polish", "自动语音校正", c.cloud.auto_polish_enabled)}${toggle("context", "读取光标上下文", c.cloud.llm_context_enabled, "仅用于校正请求")}${toggle("custom_api", "使用自定义接口", customApiEnabled, "关闭时使用项目内置的豆包润色服务")}</div><div class="backend-note" id="backend-note"></div><div class="custom-api-fields" id="custom-api-fields" ${customApiEnabled ? "" : "hidden"}><div class="grid two">${field("llm_url", "兼容接口地址", c.cloud.llm_base_url)}${field("llm_model", "模型名称", c.cloud.llm_model)}${field("llm_key", "接口密钥", c.cloud.llm_api_key, "password")}${select("thinking", "深度思考", c.cloud.llm_thinking_mode, [["omit", "不发送参数"], ["disabled", "关闭"], ["enabled", "开启"]])}${select("reasoning", "推理强度", c.cloud.llm_reasoning_effort, [["", "不发送参数"], ["low", "低"], ["medium", "中"], ["high", "高"]])}</div><div class="api-test"><button class="secondary" id="test-llm">测试连接</button><span id="llm-test-result" role="status"></span></div></div><label class="field full"><span>校正提示词（留空使用内置规则）</span><textarea id="llm_prompt">${esc(c.cloud.llm_prompt)}</textarea></label></section></div></main></div>`;
+  <section class="settings-page" id="cloud"><h2>云端增强</h2><div class="grid two">${toggle("ner", "实体识别", c.cloud.ner_enabled)}${toggle("polish", "LLM 润色", c.cloud.auto_polish_enabled, "关闭后保留 ASR 原文，不发送润色请求")}</div><div class="polish-settings" id="polish-settings" ${c.cloud.auto_polish_enabled ? "" : "hidden"}><div class="grid two">${toggle("context", "读取光标上下文", c.cloud.llm_context_enabled, "仅用于润色请求")}${toggle("custom_api", "使用自定义接口", customApiEnabled, "关闭时使用项目内置的豆包润色服务")}</div><div class="backend-note" id="backend-note"></div><div class="custom-api-fields" id="custom-api-fields" ${customApiEnabled ? "" : "hidden"}><div class="grid two">${field("llm_url", "兼容接口地址", c.cloud.llm_base_url)}${field("llm_model", "模型名称", c.cloud.llm_model)}${field("llm_key", "接口密钥", c.cloud.llm_api_key, "password")}${select("thinking", "深度思考", c.cloud.llm_thinking_mode, [["omit", "不发送参数"], ["disabled", "关闭"], ["enabled", "开启"]])}${select("reasoning", "推理强度", c.cloud.llm_reasoning_effort, [["", "不发送参数"], ["low", "低"], ["medium", "中"], ["high", "高"]])}</div><div class="api-test"><button class="secondary" id="test-llm">测试连接</button><span id="llm-test-result" role="status"></span></div></div><label class="field full"><span>润色提示词（留空使用内置规则）</span><textarea id="llm_prompt">${esc(c.cloud.llm_prompt)}</textarea></label></div></section></div></main></div>`;
   document.querySelector("#save")?.addEventListener("click", save);
   document.querySelector("#close")?.addEventListener("click", () => post("hide_settings"));
   document.querySelector("#minimize")?.addEventListener("click", () => post("minimize_settings"));
@@ -96,6 +96,7 @@ function renderSettings() {
   document.querySelector("#trigger_mode")?.addEventListener("change", syncHotkeyFields);
   syncHotkeyFields();
   document.querySelector("#open-logs")?.addEventListener("click", () => post("open_logs"));
+  const polishToggle = document.querySelector<HTMLInputElement>("#polish");
   const customApiToggle = document.querySelector<HTMLInputElement>("#custom_api");
   const updateBackendMode = () => {
     const custom = Boolean(customApiToggle?.checked);
@@ -107,9 +108,15 @@ function renderSettings() {
       : `<b>内置豆包润色</b><small>使用已注册的本机设备凭据调用内置服务，无需接口密钥。</small>`;
     scheduleResize();
   };
+  const updatePolishMode = () => {
+    const settings = document.querySelector<HTMLElement>("#polish-settings");
+    if (settings) settings.hidden = !polishToggle?.checked;
+    updateBackendMode();
+  };
+  polishToggle?.addEventListener("change", updatePolishMode);
   customApiToggle?.addEventListener("change", updateBackendMode);
   document.querySelector("#test-llm")?.addEventListener("click", testCustomLlm);
-  updateBackendMode();
+  updatePolishMode();
   showSettingsPage(activeSettingsPage);
   post("get_settings_window_state");
   scheduleResize();

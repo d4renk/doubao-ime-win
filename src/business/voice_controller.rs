@@ -25,7 +25,7 @@ const EMPTY_ASR_SESSION_FINISH_TIMEOUT: Duration = Duration::from_secs(5);
 struct CloudRuntime {
     ner_client: Arc<NerClient>,
     ner_lexicon: Arc<StdMutex<NerLexicon>>,
-    rich_chat_client: Arc<RichChatClient>,
+    rich_chat_client: Option<Arc<RichChatClient>>,
     sessions: Arc<VoiceSessionStore>,
 }
 
@@ -66,7 +66,7 @@ impl VoiceController {
         mut self,
         ner_client: Arc<NerClient>,
         ner_lexicon: Arc<StdMutex<NerLexicon>>,
-        rich_chat_client: Arc<RichChatClient>,
+        rich_chat_client: Option<Arc<RichChatClient>>,
         sessions: Arc<VoiceSessionStore>,
     ) -> Self {
         self.cloud = Some(CloudRuntime {
@@ -79,9 +79,20 @@ impl VoiceController {
     }
 
     /// Replace the text-polishing backend after settings are saved.
-    pub fn reconfigure_rich_chat(&mut self, rich_chat_client: Arc<RichChatClient>) {
+    pub fn reconfigure_rich_chat(&mut self, rich_chat_client: Option<Arc<RichChatClient>>) {
         if let Some(cloud) = self.cloud.as_mut() {
             cloud.rich_chat_client = rich_chat_client;
+            if cloud.rich_chat_client.is_none() {
+                cloud.sessions.begin_session();
+                if let Some(task) = self
+                    .polish_task
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take()
+                {
+                    task.abort();
+                }
+            }
         }
     }
 
@@ -137,7 +148,11 @@ impl VoiceController {
             .as_ref()
             .map(|cloud| cloud.sessions.begin_session())
             .unwrap_or_default();
-        let context = if auto_polish_enabled && self.cloud.is_some() {
+        let polish_available = self
+            .cloud
+            .as_ref()
+            .is_some_and(|cloud| cloud.rich_chat_client.is_some());
+        let context = if auto_polish_enabled && polish_available {
             if llm_context_enabled {
                 capture_context()
             } else {
@@ -407,12 +422,16 @@ fn spawn_polish(
     record: VoiceSessionRecord,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let Some(rich_chat_client) = cloud.rich_chat_client.as_ref() else {
+            tracing::debug!("Skipping automatic polish because the backend is disabled");
+            return;
+        };
         let input = RichChatInput {
             query: record.text.clone(),
             preceding_part: record.preceding_part.clone(),
             follows_below: record.follows_below.clone(),
         };
-        match cloud.rich_chat_client.polish(input).await {
+        match rich_chat_client.polish(input).await {
             Ok(result) => {
                 if result.content.trim().is_empty() {
                     tracing::warn!(

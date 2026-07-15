@@ -1,3 +1,11 @@
+.polish-settings {
+  margin-top: 12px;
+}
+
+.polish-settings[hidden] {
+  display: none;
+}
+
 .backend-note {
   margin-top: 12px;
   padding: 13px 14px;
