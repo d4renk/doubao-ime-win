@@ -10,7 +10,6 @@
 !/README.md
 !/SECURITY.md
 !/build.rs
-!/config.toml
 !/config.toml.example
 !/rust-toolchain.toml
 
@@ -34,6 +33,7 @@
 !/tools/protoc/readme.txt
 
 # Security and machine-local deny rules always win.
+/config.toml
 **/.env
 **/.env.*
 **/credentials.json
