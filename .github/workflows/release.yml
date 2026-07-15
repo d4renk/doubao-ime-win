@@ -91,7 +91,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/doubao-voice-input.exe dist/doubao-voice-input.exe
-          Copy-Item config.toml dist/config.toml
+          Copy-Item config.toml.example dist/config.toml
           $hash = (Get-FileHash dist/doubao-voice-input.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash *doubao-voice-input.exe" | Set-Content dist/doubao-voice-input.exe.sha256 -Encoding ascii
 
