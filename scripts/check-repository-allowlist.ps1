@@ -11,18 +11,14 @@ $allowedPatterns = @(
     '^config\.toml$',
     '^config\.toml\.example$',
     '^rust-toolchain\.toml$',
-    '^Gemini_Generated_Image_nse4abnse4abnse4\.png$',
-    '^(?:crop_icons|make_circular|process_icons|resize_icons|split_icons)\.py$',
     '^protoc-33\.4-win64\.zip$',
     '^PRD/.+\.md$',
-    '^assets/[^/]+\.png$',
     '^examples/[^/]+\.rs$',
     '^frontend/(?:index\.html|package(?:-lock)?\.json|tsconfig\.json)$',
     '^frontend/src/.+\.(?:ts|css)$',
     '^proto/[^/]+\.proto$',
     '^scripts/[^/]+\.ps1$',
     '^src/.+\.rs$',
-    '^tools/protoc/include/.+\.proto$',
     '^tools/protoc/readme\.txt$'
 )
 
@@ -34,7 +30,14 @@ $deniedPatterns = @(
     '~$'
 )
 
-$trackedFiles = @(git -c core.quotepath=false ls-files)
+$repoRoot = (& git rev-parse --show-toplevel).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to locate the repository root."
+}
+
+$trackedFiles = @(git -c core.quotepath=false ls-files | Where-Object {
+    Test-Path -LiteralPath (Join-Path $repoRoot $_) -PathType Leaf
+})
 if ($LASTEXITCODE -ne 0) {
     throw "Unable to enumerate tracked files."
 }

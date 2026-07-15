@@ -14,20 +14,13 @@
 !/config.toml.example
 !/rust-toolchain.toml
 
-# Checked-in source assets and maintenance tools
-!/Gemini_Generated_Image_nse4abnse4abnse4.png
-!/crop_icons.py
-!/make_circular.py
-!/process_icons.py
-!/resize_icons.py
-!/split_icons.py
+# Checked-in build tools
 !/protoc-33.4-win64.zip
 
 # Owned repository trees
 !/.github/**/*.yml
 !/.github/**/*.yaml
 !/PRD/**/*.md
-!/assets/*.png
 !/examples/*.rs
 !/proto/*.proto
 !/scripts/*.ps1
@@ -38,7 +31,6 @@
 !/frontend/tsconfig.json
 !/frontend/src/**/*.ts
 !/frontend/src/**/*.css
-!/tools/protoc/include/**/*.proto
 !/tools/protoc/readme.txt
 
 # Security and machine-local deny rules always win.

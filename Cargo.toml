@@ -62,8 +62,6 @@ hex = "0.4"
 # MD5 hashing (for x-ss-stub header)
 md5 = "0.7"
 
-# Image for tray icon
-image = { version = "0.25.10", default-features = false, features = ["png"] }
 tao = "0.35.3"
 wry = { version = "0.55.1", default-features = false, features = ["protocol", "transparent"] }
 rust-embed = "8.12.0"
