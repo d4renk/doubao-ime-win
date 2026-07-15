@@ -98,11 +98,12 @@ incremental = false
 debug = 0
 
 [profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
+opt-level = "s"
+lto = "thin"
+codegen-units = 8
 strip = true
 panic = "abort"
+incremental = false
 
 [[bin]]
 name = "doubao-voice-input"
