@@ -52,7 +52,7 @@ fn main() {
                 let mut r = RECT::default();
                 let _ = GetClientRect(hwnd, &mut r);
                 FillRect(hdc, &r, bg);
-                let _ = DeleteObject(bg);
+                let _ = DeleteObject(bg.into());
 
                 let state = STATE.load(Ordering::SeqCst);
                 let color = match state {
@@ -63,8 +63,8 @@ fn main() {
 
                 let brush = CreateSolidBrush(color);
                 let pen = CreatePen(PS_SOLID, 2, COLORREF(0xFFFFFF));
-                let ob = SelectObject(hdc, brush);
-                let op = SelectObject(hdc, pen);
+                let ob = SelectObject(hdc, brush.into());
+                let op = SelectObject(hdc, pen.into());
 
                 let c = WINDOW_SIZE / 2;
                 let _ = Ellipse(
@@ -77,10 +77,10 @@ fn main() {
 
                 SelectObject(hdc, ob);
                 SelectObject(hdc, op);
-                let _ = DeleteObject(brush);
-                let _ = DeleteObject(pen);
+                let _ = DeleteObject(brush.into());
+                let _ = DeleteObject(pen.into());
 
-                EndPaint(hwnd, &ps);
+                let _ = EndPaint(hwnd, &ps);
                 LRESULT(0)
             }
             WM_LBUTTONDOWN => {
@@ -97,7 +97,7 @@ fn main() {
                 START_WIN_Y.store(rect.top, Ordering::SeqCst);
 
                 // Start timer to poll mouse position (16ms = ~60fps)
-                let _ = SetTimer(hwnd, DRAG_TIMER_ID, 16, None);
+                let _ = SetTimer(Some(hwnd), DRAG_TIMER_ID, 16, None);
 
                 LRESULT(0)
             }
@@ -108,7 +108,7 @@ fn main() {
                     if (key_state & 0x8000u16 as i16) == 0 {
                         // Mouse button released - treat as mouse up
                         MOUSE_DOWN.store(false, Ordering::SeqCst);
-                        let _ = KillTimer(hwnd, DRAG_TIMER_ID);
+                        let _ = KillTimer(Some(hwnd), DRAG_TIMER_ID);
 
                         // Check for click
                         let mut pt = POINT::default();
@@ -125,7 +125,7 @@ fn main() {
                                 ["空闲", "录音", "处理"][cur as usize],
                                 ["空闲", "录音", "处理"][nxt as usize]
                             );
-                            let _ = InvalidateRect(hwnd, None, TRUE);
+                            let _ = InvalidateRect(Some(hwnd), None, true);
                         }
                     } else {
                         // Still dragging - update window position
@@ -139,7 +139,7 @@ fn main() {
                         let new_y = START_WIN_Y.load(Ordering::SeqCst) + dy;
                         let _ = SetWindowPos(
                             hwnd,
-                            HWND_TOPMOST,
+                            Some(HWND_TOPMOST),
                             new_x,
                             new_y,
                             0,
@@ -153,7 +153,7 @@ fn main() {
             WM_LBUTTONUP => {
                 if MOUSE_DOWN.load(Ordering::SeqCst) {
                     MOUSE_DOWN.store(false, Ordering::SeqCst);
-                    let _ = KillTimer(hwnd, DRAG_TIMER_ID);
+                    let _ = KillTimer(Some(hwnd), DRAG_TIMER_ID);
 
                     let mut pt = POINT::default();
                     let _ = GetCursorPos(&mut pt);
@@ -169,7 +169,7 @@ fn main() {
                             ["空闲", "录音", "处理"][cur as usize],
                             ["空闲", "录音", "处理"][nxt as usize]
                         );
-                        let _ = InvalidateRect(hwnd, None, TRUE);
+                        let _ = InvalidateRect(Some(hwnd), None, true);
                     }
                 }
                 LRESULT(0)
@@ -181,7 +181,7 @@ fn main() {
                 LRESULT(0)
             }
             WM_DESTROY => {
-                let _ = KillTimer(hwnd, DRAG_TIMER_ID);
+                let _ = KillTimer(Some(hwnd), DRAG_TIMER_ID);
                 PostQuitMessage(0);
                 LRESULT(0)
             }
@@ -230,16 +230,19 @@ fn main() {
             100,
             WINDOW_SIZE,
             WINDOW_SIZE,
-            HWND::default(),
-            HMENU::default(),
-            inst,
+            None,
+            None,
+            Some(inst.into()),
             None,
         );
 
-        if hwnd.0 == 0 {
-            eprintln!("CreateWindowExW failed");
-            return;
-        }
+        let hwnd = match hwnd {
+            Ok(hwnd) => hwnd,
+            Err(error) => {
+                eprintln!("CreateWindowExW failed: {error}");
+                return;
+            }
+        };
 
         println!("悬浮窗已创建！");
         println!("- 拖动窗口移动位置");
@@ -248,7 +251,7 @@ fn main() {
         let _ = ShowWindow(hwnd, SW_SHOW);
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }

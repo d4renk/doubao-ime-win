@@ -13,6 +13,7 @@ use uuid::Uuid;
 use super::constants::*;
 
 fn http_client() -> Result<Client> {
+    crate::init_crypto_provider();
     Client::builder().no_proxy().build().map_err(Into::into)
 }
 

@@ -98,14 +98,15 @@ jobs:
         run: cargo test --locked --all-targets
 
       - name: Build release executable
-        run: cargo build --locked --release
+        shell: pwsh
+        run: ./scripts/build-release.ps1
 
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: doubao-voice-input-windows-${{ github.sha }}
           path: |
-            target/release/doubao-voice-input.exe
+            target/x86_64-pc-windows-msvc/release/doubao-voice-input.exe
             config.toml
           if-no-files-found: error
           retention-days: 30

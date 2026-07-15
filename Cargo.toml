@@ -9,18 +9,18 @@ repository = "https://github.com/d4renk/doubao-ime-win"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.35", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 # HTTP client for device registration
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "query", "native-tls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "query", "rustls-no-provider"] }
 
 # WebSocket client
-tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 rustls = { version = "0.23.41", default-features = false, features = ["ring", "std", "tls12"] }
 
 # Audio capture
-cpal = "0.15"
+cpal = "0.18.1"
 rubato = { version = "0.16.2", default-features = false }
 sonora = "0.1.0"
 
@@ -73,7 +73,7 @@ mime_guess = "2.0"
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4.1"
 wasapi = "0.23.0"
-windows = { version = "0.52", features = [
+windows = { version = "0.61.3", features = [
     "Win32_Foundation",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Controls",
@@ -91,6 +91,20 @@ windows = { version = "0.52", features = [
 
 [build-dependencies]
 prost-build = "0.12"
+
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.dev.package."*"]
+debug = 0
+
+[profile.test]
+debug = 1
+incremental = false
+
+[profile.test.package."*"]
+debug = 0
 
 [profile.release]
 opt-level = "z"

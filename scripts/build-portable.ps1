@@ -7,24 +7,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 
 Write-Host "🔧 Building Doubao Voice Input v$Version..." -ForegroundColor Cyan
 
-# Clean if requested
-if ($Clean) {
-    Write-Host "🧹 Cleaning previous build..." -ForegroundColor Yellow
-    cargo clean
-}
-
-# Build release version with static linking
+# Build the canonical locked, static-CRT release.
 Write-Host "🏗️ Building release version..." -ForegroundColor Yellow
-$env:RUSTFLAGS = "-C target-feature=+crt-static"
-cargo build --release --target x86_64-pc-windows-msvc
+& (Join-Path $PSScriptRoot "build-release.ps1") -Clean:$Clean
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Build failed!" -ForegroundColor Red
-    exit 1
-}
+Push-Location $RepoRoot
+try {
 
 # Create portable directory
 $PortableDir = "dist\doubao-voice-portable"
@@ -84,3 +76,6 @@ Write-Host "📁 Output files:" -ForegroundColor Cyan
 Write-Host "   $PortableDir\"
 Write-Host "   $ZipPath"
 Write-Host ""
+} finally {
+    Pop-Location
+}

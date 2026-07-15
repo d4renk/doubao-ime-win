@@ -62,5 +62,6 @@ pub enum CloudError {
 }
 
 fn http_client() -> Result<reqwest::Client, CloudError> {
+    crate::init_crypto_provider();
     Ok(reqwest::Client::builder().no_proxy().build()?)
 }

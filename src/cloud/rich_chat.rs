@@ -432,6 +432,7 @@ mod tests {
     use super::*;
 
     fn test_http_client() -> Client {
+        crate::init_crypto_provider();
         Client::builder().build().unwrap()
     }
 

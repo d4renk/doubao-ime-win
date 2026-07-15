@@ -10,8 +10,25 @@ pub mod cloud;
 pub mod data;
 pub mod ui;
 
+/// Install the process-wide Rustls crypto provider used by all network clients.
+///
+/// Calling this more than once is harmless. If an embedding application already
+/// installed a provider, Rustls keeps that provider instead.
+pub fn init_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 pub use asr::AsrClient;
 pub use audio::AudioCapture;
 pub use business::{HotkeyManager, TextInserter, VoiceController, VoiceSessionStore};
 pub use cloud::{NerClient, NerLexicon, RichChatClient};
 pub use data::{AppConfig, CredentialStore};
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn crypto_provider_initialization_is_idempotent() {
+        super::init_crypto_provider();
+        super::init_crypto_provider();
+    }
+}

@@ -482,7 +482,7 @@ fn set_hud_no_activate(window: &Window) {
         },
     };
     unsafe {
-        let hwnd = HWND(window.hwnd() as isize);
+        let hwnd = HWND(window.hwnd() as *mut _);
         let style = GetWindowLongW(hwnd, GWL_EXSTYLE);
         SetWindowLongW(
             hwnd,
@@ -517,7 +517,7 @@ fn set_settings_immersive_theme(window: &Window) {
     }
 
     unsafe {
-        let hwnd = HWND(window.hwnd() as isize);
+        let hwnd = HWND(window.hwnd() as *mut _);
         let dark_mode: i32 = 1;
         // COLORREF values use 0x00BBGGRR byte order.
         let caption_color: u32 = 0x001A_1617; // #17161a

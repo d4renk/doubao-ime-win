@@ -20,8 +20,8 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use doubao_voice_input::{
-    AppConfig, AsrClient, AudioCapture, CredentialStore, HotkeyManager, NerClient, NerLexicon,
-    RichChatClient, TextInserter, VoiceController, VoiceSessionStore,
+    init_crypto_provider, AppConfig, AsrClient, AudioCapture, CredentialStore, HotkeyManager,
+    NerClient, NerLexicon, RichChatClient, TextInserter, VoiceController, VoiceSessionStore,
 };
 
 #[tokio::main]
@@ -42,10 +42,6 @@ async fn main() {
         eprintln!("Application failed: {error:#}");
         process::exit(1);
     }
-}
-
-fn init_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 /// Run in full UI mode with system tray and hotkeys

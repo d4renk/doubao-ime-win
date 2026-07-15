@@ -1,6 +1,7 @@
 //! Simple audio test - run with: cargo run --example audio_test
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{SampleFormat, SizedSample};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +32,10 @@ fn main() {
     match host.input_devices() {
         Ok(device_iter) => {
             for (i, device) in device_iter.enumerate() {
-                let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+                let name = device
+                    .description()
+                    .map(|description| description.name().to_owned())
+                    .unwrap_or_else(|_| "Unknown".to_owned());
                 println!("  [{}] {}", i, name);
 
                 // Show supported configs
@@ -56,7 +60,13 @@ fn main() {
     println!();
     match host.default_input_device() {
         Some(device) => {
-            println!("[Default] {}", device.name().unwrap_or_default());
+            println!(
+                "[Default] {}",
+                device
+                    .description()
+                    .map(|description| description.name().to_owned())
+                    .unwrap_or_else(|_| "Unknown".to_owned())
+            );
         }
         None => {
             println!("[Default] NONE - no default input device set!");
@@ -80,7 +90,13 @@ fn main() {
     println!();
     println!("[Test] Attempting to use first available device...");
     let device = &devices[0];
-    println!("[Using] {}", device.name().unwrap_or_default());
+    println!(
+        "[Using] {}",
+        device
+            .description()
+            .map(|description| description.name().to_owned())
+            .unwrap_or_else(|_| "Unknown".to_owned())
+    );
 
     let config = match device.default_input_config() {
         Ok(c) => {
@@ -98,16 +114,30 @@ fn main() {
 
     println!("[Stream] Building...");
 
-    let stream = device.build_input_stream(
-        &config.into(),
-        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            sample_count_clone.fetch_add(data.len() as u64, Ordering::Relaxed);
-        },
-        |err| {
-            println!("[ERROR] Stream error: {}", err);
-        },
-        None,
-    );
+    let sample_format = config.sample_format();
+    let stream_config = config.config();
+    let stream = match sample_format {
+        SampleFormat::I8 => build_count_stream::<i8>(device, stream_config, sample_count_clone),
+        SampleFormat::I16 => build_count_stream::<i16>(device, stream_config, sample_count_clone),
+        SampleFormat::I24 => {
+            build_count_stream::<cpal::I24>(device, stream_config, sample_count_clone)
+        }
+        SampleFormat::I32 => build_count_stream::<i32>(device, stream_config, sample_count_clone),
+        SampleFormat::I64 => build_count_stream::<i64>(device, stream_config, sample_count_clone),
+        SampleFormat::U8 => build_count_stream::<u8>(device, stream_config, sample_count_clone),
+        SampleFormat::U16 => build_count_stream::<u16>(device, stream_config, sample_count_clone),
+        SampleFormat::U24 => {
+            build_count_stream::<cpal::U24>(device, stream_config, sample_count_clone)
+        }
+        SampleFormat::U32 => build_count_stream::<u32>(device, stream_config, sample_count_clone),
+        SampleFormat::U64 => build_count_stream::<u64>(device, stream_config, sample_count_clone),
+        SampleFormat::F32 => build_count_stream::<f32>(device, stream_config, sample_count_clone),
+        SampleFormat::F64 => build_count_stream::<f64>(device, stream_config, sample_count_clone),
+        format => {
+            println!("[ERROR] Unsupported non-PCM sample format: {format}");
+            return;
+        }
+    };
 
     let stream = match stream {
         Ok(s) => {
@@ -150,4 +180,19 @@ fn main() {
         println!("  2. Microphone volume is zero");
         println!("  3. Another app has exclusive access");
     }
+}
+
+fn build_count_stream<T: SizedSample>(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    sample_count: Arc<AtomicU64>,
+) -> Result<cpal::Stream, cpal::Error> {
+    device.build_input_stream(
+        config,
+        move |data: &[T], _: &cpal::InputCallbackInfo| {
+            sample_count.fetch_add(data.len() as u64, Ordering::Relaxed);
+        },
+        |error| println!("[ERROR] Stream error: {error}"),
+        None,
+    )
 }

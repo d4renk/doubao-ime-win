@@ -26,6 +26,7 @@ pub struct AsrClient {
 impl AsrClient {
     /// Create a new ASR client with credentials
     pub fn new(credentials: DeviceCredentials) -> Self {
+        crate::init_crypto_provider();
         Self { credentials }
     }
 

@@ -330,8 +330,8 @@ fn run_raw_key_hook(
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-        HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_QUIT,
-        WM_XBUTTONDOWN, WM_XBUTTONUP,
+        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_QUIT, WM_XBUTTONDOWN,
+        WM_XBUTTONUP,
     };
 
     struct HookState {
@@ -426,7 +426,7 @@ fn run_raw_key_hook(
             }
         }
 
-        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+        CallNextHookEx(None, code, wparam, lparam)
     }
 
     unsafe extern "system" fn mouse_hook_proc(
@@ -468,7 +468,7 @@ fn run_raw_key_hook(
                 });
             }
         }
-        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+        CallNextHookEx(None, code, wparam, lparam)
     }
 
     let keyboard_hook =

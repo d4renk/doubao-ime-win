@@ -160,7 +160,7 @@ llm_custom_api_enabled = false  # false 使用内置豆包 Scene 5；true 使用
 
 ### 环境要求
 
-- Rust 1.70+ (stable)
+- Rust 1.97.0（由 `rust-toolchain.toml` 固定）
 - Windows 10/11 x64
 - Visual Studio Build Tools 2022
 - CMake
@@ -179,11 +179,14 @@ cd frontend
 npm ci
 cd ..
 
-# 构建 Release 版本
-cargo build --release
+# 构建锁定依赖、静态 CRT 的 Windows x64 Release 版本
+./scripts/build-release.ps1
+
+# 如需仅清理并重建该 Release 目标
+./scripts/build-release.ps1 -Clean
 
 # 可执行文件位置
-# target/release/doubao-voice-input.exe
+# target/x86_64-pc-windows-msvc/release/doubao-voice-input.exe
 ```
 
 ### GitHub Actions

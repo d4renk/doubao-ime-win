@@ -75,17 +75,17 @@ mod windows_impl {
             replacement: &str,
         ) -> Result<()> {
             let hwnd = target.hwnd();
-            if hwnd.0 == 0 || !unsafe { IsWindow(hwnd).as_bool() } {
+            if hwnd.0.is_null() || !unsafe { IsWindow(Some(hwnd)).as_bool() } {
                 bail!("cannot replace text: target window is invalid");
             }
 
             if unsafe { IsIconic(hwnd).as_bool() } {
                 unsafe {
-                    ShowWindow(hwnd, SW_RESTORE);
+                    let _ = ShowWindow(hwnd, SW_RESTORE);
                 }
             }
             unsafe {
-                SetForegroundWindow(hwnd);
+                let _ = SetForegroundWindow(hwnd);
             }
 
             let mut focused = false;

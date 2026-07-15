@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::SampleFormat;
+use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
@@ -32,7 +32,10 @@ impl AudioCapture {
             Some(device) => {
                 println!(
                     "[AudioCapture] Default device: {}",
-                    device.name().unwrap_or_default()
+                    device
+                        .description()
+                        .map(|description| description.name().to_owned())
+                        .unwrap_or_else(|_| "Unknown".to_owned())
                 );
             }
             None => {
@@ -133,14 +136,17 @@ fn run_audio_capture(
 
     println!(
         "[AudioCapture] Device: {}",
-        device.name().unwrap_or_default()
+        device
+            .description()
+            .map(|description| description.name().to_owned())
+            .unwrap_or_else(|_| "Unknown".to_owned())
     );
 
     // Get the device's default config - USE THIS EXACTLY
     let supported_config = device.default_input_config()?;
     println!("[AudioCapture] Device config: {:?}", supported_config);
 
-    let native_sample_rate = supported_config.sample_rate().0;
+    let native_sample_rate = supported_config.sample_rate();
     let native_channels = supported_config.channels();
     let sample_format = supported_config.sample_format();
 
@@ -187,58 +193,92 @@ fn run_audio_capture(
     let frame_counter_clone = frame_counter.clone();
     let native_channels_clone = native_channels;
 
-    let err_fn = |err| {
-        println!("[AudioCapture] Stream error: {}", err);
-    };
-
     let stream = match sample_format {
-        SampleFormat::I16 => {
-            println!("[AudioCapture] Building I16 stream");
-            let mut buffer = Vec::<f32>::with_capacity(samples_per_frame_native * 2);
-
-            device.build_input_stream(
-                &config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    if !is_recording_clone.load(Ordering::SeqCst) {
-                        return;
-                    }
-
-                    buffer.extend(data.iter().map(|sample| *sample as f32 / 32768.0));
-
-                    while buffer.len() >= samples_per_frame_native {
-                        let frame: Vec<f32> = buffer.drain(..samples_per_frame_native).collect();
-                        let _ = std_tx.send(frame);
-                    }
-                },
-                err_fn,
-                None,
-            )?
-        }
-        SampleFormat::F32 => {
-            println!("[AudioCapture] Building F32 stream");
-            let mut buffer = Vec::<f32>::with_capacity(samples_per_frame_native * 2);
-
-            device.build_input_stream(
-                &config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    if !is_recording_clone.load(Ordering::SeqCst) {
-                        return;
-                    }
-
-                    buffer.extend_from_slice(data);
-
-                    while buffer.len() >= samples_per_frame_native {
-                        let frame: Vec<f32> = buffer.drain(..samples_per_frame_native).collect();
-                        let _ = std_tx.send(frame);
-                    }
-                },
-                err_fn,
-                None,
-            )?
-        }
-        format => {
-            return Err(anyhow!("Unsupported format: {:?}", format));
-        }
+        SampleFormat::I8 => build_pcm_input_stream::<i8>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::I16 => build_pcm_input_stream::<i16>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::I24 => build_pcm_input_stream::<cpal::I24>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::I32 => build_pcm_input_stream::<i32>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::I64 => build_pcm_input_stream::<i64>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::U8 => build_pcm_input_stream::<u8>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::U16 => build_pcm_input_stream::<u16>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::U24 => build_pcm_input_stream::<cpal::U24>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::U32 => build_pcm_input_stream::<u32>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::U64 => build_pcm_input_stream::<u64>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::F32 => build_pcm_input_stream::<f32>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        SampleFormat::F64 => build_pcm_input_stream::<f64>(
+            &device,
+            config,
+            samples_per_frame_native,
+            is_recording_clone,
+            std_tx,
+        )?,
+        format => return Err(anyhow!("Unsupported non-PCM sample format: {format}")),
     };
 
     stream.play()?;
@@ -407,6 +447,35 @@ fn run_audio_capture(
     meter_level.store(0, Ordering::Relaxed);
 
     Ok(())
+}
+
+fn build_pcm_input_stream<T>(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    samples_per_frame: usize,
+    is_recording: Arc<AtomicBool>,
+    sender: std_mpsc::Sender<Vec<f32>>,
+) -> Result<cpal::Stream>
+where
+    T: Sample + SizedSample,
+    f32: FromSample<T>,
+{
+    let mut buffer = Vec::<f32>::with_capacity(samples_per_frame * 2);
+    Ok(device.build_input_stream(
+        config,
+        move |data: &[T], _: &cpal::InputCallbackInfo| {
+            if !is_recording.load(Ordering::SeqCst) {
+                return;
+            }
+            buffer.extend(data.iter().map(|sample| sample.to_sample::<f32>()));
+            while buffer.len() >= samples_per_frame {
+                let frame = buffer.drain(..samples_per_frame).collect();
+                let _ = sender.send(frame);
+            }
+        },
+        |error| println!("[AudioCapture] Stream error: {error}"),
+        None,
+    )?)
 }
 
 fn cancel_echo(

@@ -64,7 +64,7 @@ mod platform {
         first_chars, last_chars, ContextSnapshot, TargetWindow, CONTEXT_CAPTURE_TIMEOUT,
         CONTEXT_CHAR_LIMIT,
     };
-    use std::sync::mpsc;
+    use std::{ffi::c_void, sync::mpsc};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
@@ -80,11 +80,13 @@ mod platform {
     impl TargetWindow {
         pub fn capture_foreground() -> Option<Self> {
             let hwnd = unsafe { GetForegroundWindow() };
-            (hwnd.0 != 0).then_some(Self { raw_handle: hwnd.0 })
+            (!hwnd.0.is_null()).then_some(Self {
+                raw_handle: hwnd.0 as isize,
+            })
         }
 
         pub(crate) fn hwnd(self) -> HWND {
-            HWND(self.raw_handle)
+            HWND(self.raw_handle as *mut c_void)
         }
     }
 

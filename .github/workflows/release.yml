@@ -83,13 +83,14 @@ jobs:
           (Join-Path $protocDir "bin") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build locked release
-        run: cargo build --locked --release
+        shell: pwsh
+        run: ./scripts/build-release.ps1
 
       - name: Prepare release files and checksum
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item target/release/doubao-voice-input.exe dist/doubao-voice-input.exe
+          Copy-Item target/x86_64-pc-windows-msvc/release/doubao-voice-input.exe dist/doubao-voice-input.exe
           Copy-Item config.toml dist/config.toml
           $hash = (Get-FileHash dist/doubao-voice-input.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash *doubao-voice-input.exe" | Set-Content dist/doubao-voice-input.exe.sha256 -Encoding ascii
