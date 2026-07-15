@@ -26,3 +26,28 @@
 .custom-api-fields[hidden] {
   display: none;
 }
+
+.api-test {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.api-test span {
+  color: #aeb7bf;
+  font-size: 12px;
+}
+
+.api-test .success {
+  color: #73c99a;
+}
+
+.api-test .failure {
+  color: #ef9a9a;
+}
+
+.api-test button:disabled {
+  cursor: wait;
+  opacity: .6;
+}

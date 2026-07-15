@@ -24,6 +24,29 @@ use crate::data::HotkeyConfig;
 pub enum HotkeyEvent {
     /// Toggle recording once.
     Toggle,
+    /// Start recording for a press-and-hold binding.
+    Start,
+    /// Stop recording when a press-and-hold binding is released.
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TriggerMode {
+    SingleTap,
+    DoubleTap,
+    Hold,
+}
+
+impl TriggerMode {
+    fn from_config(config: &HotkeyConfig) -> Self {
+        match config.mode.to_ascii_lowercase().as_str() {
+            "double_tap" => Self::DoubleTap,
+            "hold" => Self::Hold,
+            // `combo` is the pre-existing single-trigger mode.
+            "single_tap" | "combo" => Self::SingleTap,
+            _ => Self::SingleTap,
+        }
+    }
 }
 
 /// Identity of a Windows raw keyboard event.
@@ -64,7 +87,7 @@ impl HotkeyManager {
             tracing::info!("Registered standard hotkey: {}", config.combo_key);
             Some(hotkey)
         } else {
-            tracing::info!("Standard modifier double-tap will use the Windows keyboard hook");
+            tracing::info!("Standard modifier binding will use the Windows keyboard hook");
             None
         };
 
@@ -155,6 +178,7 @@ impl HotkeyManager {
         thread::spawn(move || {
             let receiver = GlobalHotKeyEvent::receiver();
             let mut last_press_time: Option<Instant> = None;
+            let mut pressed = false;
 
             loop {
                 if !standard_active.load(Ordering::SeqCst) {
@@ -171,7 +195,6 @@ impl HotkeyManager {
                         .read()
                         .map(|config| config.binding.eq_ignore_ascii_case("raw"))
                         .unwrap_or(true)
-                    || event.state != HotKeyState::Pressed
                 {
                     continue;
                 }
@@ -187,22 +210,34 @@ impl HotkeyManager {
                     }
                 }
 
-                if current_config.mode.eq_ignore_ascii_case("combo") {
-                    standard_callback(HotkeyEvent::Toggle);
-                    continue;
-                }
-
-                let now = Instant::now();
-                if let Some(last) = last_press_time {
-                    if now.duration_since(last)
-                        <= Duration::from_millis(current_config.double_tap_interval)
-                    {
-                        standard_callback(HotkeyEvent::Toggle);
-                        last_press_time = None;
-                        continue;
+                match event.state {
+                    HotKeyState::Pressed if !pressed => {
+                        pressed = true;
+                        match TriggerMode::from_config(&current_config) {
+                            TriggerMode::SingleTap => standard_callback(HotkeyEvent::Toggle),
+                            TriggerMode::Hold => standard_callback(HotkeyEvent::Start),
+                            TriggerMode::DoubleTap => {
+                                let now = Instant::now();
+                                if last_press_time.is_some_and(|last| {
+                                    now.duration_since(last)
+                                        <= Duration::from_millis(current_config.double_tap_interval)
+                                }) {
+                                    standard_callback(HotkeyEvent::Toggle);
+                                    last_press_time = None;
+                                } else {
+                                    last_press_time = Some(now);
+                                }
+                            }
+                        }
                     }
+                    HotKeyState::Released if pressed => {
+                        pressed = false;
+                        if TriggerMode::from_config(&current_config) == TriggerMode::Hold {
+                            standard_callback(HotkeyEvent::Stop);
+                        }
+                    }
+                    _ => {}
                 }
-                last_press_time = Some(now);
             }
         });
 
@@ -276,6 +311,12 @@ impl HotkeyManager {
 }
 
 fn validate_config(config: &HotkeyConfig) -> Result<()> {
+    if !matches!(
+        config.mode.to_ascii_lowercase().as_str(),
+        "combo" | "single_tap" | "double_tap" | "hold"
+    ) {
+        return Err(anyhow!("Unsupported hotkey trigger mode: {}", config.mode));
+    }
     if config.binding.eq_ignore_ascii_case("raw") {
         if config.raw_vk_code == 0 {
             return Err(anyhow!("Raw binding requires a non-zero virtual-key code"));
@@ -290,18 +331,23 @@ fn validate_config(config: &HotkeyConfig) -> Result<()> {
 fn configured_standard_hotkey(config: &HotkeyConfig) -> Result<Option<HotKey>> {
     if config.mode.eq_ignore_ascii_case("combo") {
         Ok(Some(parse_combo_key(&config.combo_key)?))
-    } else if is_modifier_double_tap(config) {
+    } else if is_standard_modifier_binding(config) {
         Ok(None)
     } else {
-        Ok(Some(HotKey::new(
-            None,
-            parse_key_code(&config.double_tap_key)?,
-        )))
+        Ok(Some(parse_standard_binding(&config.double_tap_key)?))
     }
 }
 
-fn is_modifier_double_tap(config: &HotkeyConfig) -> bool {
-    config.mode.eq_ignore_ascii_case("double_tap")
+fn parse_standard_binding(key: &str) -> Result<HotKey> {
+    if key.contains('+') {
+        parse_combo_key(key)
+    } else {
+        Ok(HotKey::new(None, parse_key_code(key)?))
+    }
+}
+
+fn is_standard_modifier_binding(config: &HotkeyConfig) -> bool {
+    !config.mode.eq_ignore_ascii_case("combo")
         && matches!(
             config.double_tap_key.to_lowercase().as_str(),
             "ctrl" | "control" | "shift" | "alt"
@@ -339,7 +385,8 @@ fn run_raw_key_hook(
         is_active: Arc<AtomicBool>,
         callback: Arc<dyn Fn(HotkeyEvent) + Send + Sync>,
         pressed: Option<RawKeyBinding>,
-        last_modifier_release: Option<Instant>,
+        modifier_chorded: bool,
+        last_tap: Option<(RawKeyBinding, Instant)>,
         capture_sender: Arc<Mutex<Option<mpsc::Sender<RawKeyBinding>>>>,
     }
 
@@ -353,7 +400,8 @@ fn run_raw_key_hook(
             is_active,
             callback,
             pressed: None,
-            last_modifier_release: None,
+            modifier_chorded: false,
+            last_tap: None,
             capture_sender,
         });
     });
@@ -398,28 +446,60 @@ fn run_raw_key_hook(
                                 || config.raw_scan_code == identity.scan_code)
                             && config.raw_extended == identity.extended;
                         let modifier_matches = config.binding.eq_ignore_ascii_case("standard")
-                            && is_modifier_double_tap(&config)
+                            && is_standard_modifier_binding(&config)
                             && standard_modifier_matches(&config.double_tap_key, identity.vk_code);
+                        let mode = TriggerMode::from_config(&config);
 
                         if is_up {
                             if hook.pressed == Some(identity) {
                                 hook.pressed = None;
-                            }
-                            if modifier_matches {
-                                let now = Instant::now();
-                                if hook.last_modifier_release.is_some_and(|last| {
-                                    now.duration_since(last)
-                                        <= Duration::from_millis(config.double_tap_interval)
-                                }) {
-                                    (hook.callback)(HotkeyEvent::Toggle);
-                                    hook.last_modifier_release = None;
-                                } else {
-                                    hook.last_modifier_release = Some(now);
+                                if modifier_matches {
+                                    match mode {
+                                        TriggerMode::SingleTap if !hook.modifier_chorded => {
+                                            (hook.callback)(HotkeyEvent::Toggle);
+                                        }
+                                        TriggerMode::DoubleTap if !hook.modifier_chorded => {
+                                            emit_double_tap_if_ready(
+                                                hook,
+                                                identity,
+                                                config.double_tap_interval,
+                                            );
+                                        }
+                                        TriggerMode::Hold => {
+                                            (hook.callback)(HotkeyEvent::Stop);
+                                        }
+                                        _ => {}
+                                    }
+                                    hook.modifier_chorded = false;
+                                } else if raw_matches && mode == TriggerMode::Hold {
+                                    (hook.callback)(HotkeyEvent::Stop);
                                 }
                             }
+                        } else if modifier_matches {
+                            if hook.pressed.is_none() {
+                                hook.pressed = Some(identity);
+                                hook.modifier_chorded = false;
+                                if mode == TriggerMode::Hold {
+                                    (hook.callback)(HotkeyEvent::Start);
+                                }
+                            }
+                        } else if hook.pressed.is_some()
+                            && config.binding.eq_ignore_ascii_case("standard")
+                        {
+                            // A pure modifier only counts when it was pressed and
+                            // released without participating in another shortcut.
+                            hook.modifier_chorded = true;
                         } else if raw_matches && hook.pressed.is_none() {
                             hook.pressed = Some(identity);
-                            (hook.callback)(HotkeyEvent::Toggle);
+                            match mode {
+                                TriggerMode::SingleTap => (hook.callback)(HotkeyEvent::Toggle),
+                                TriggerMode::DoubleTap => emit_double_tap_if_ready(
+                                    hook,
+                                    identity,
+                                    config.double_tap_interval,
+                                ),
+                                TriggerMode::Hold => (hook.callback)(HotkeyEvent::Start),
+                            }
                         }
                     }
                 });
@@ -456,19 +536,44 @@ fn run_raw_key_hook(
                             && (config.raw_scan_code == 0
                                 || config.raw_scan_code == identity.scan_code)
                             && config.raw_extended == identity.extended;
+                        let mode = TriggerMode::from_config(&config);
                         if wparam.0 as u32 == WM_XBUTTONUP {
                             if hook.pressed == Some(identity) {
                                 hook.pressed = None;
+                                if raw_matches && mode == TriggerMode::Hold {
+                                    (hook.callback)(HotkeyEvent::Stop);
+                                }
                             }
                         } else if raw_matches && hook.pressed.is_none() {
                             hook.pressed = Some(identity);
-                            (hook.callback)(HotkeyEvent::Toggle);
+                            match mode {
+                                TriggerMode::SingleTap => (hook.callback)(HotkeyEvent::Toggle),
+                                TriggerMode::DoubleTap => emit_double_tap_if_ready(
+                                    hook,
+                                    identity,
+                                    config.double_tap_interval,
+                                ),
+                                TriggerMode::Hold => (hook.callback)(HotkeyEvent::Start),
+                            }
                         }
                     }
                 });
             }
         }
         CallNextHookEx(None, code, wparam, lparam)
+    }
+
+    fn emit_double_tap_if_ready(hook: &mut HookState, identity: RawKeyBinding, interval_ms: u64) {
+        let now = Instant::now();
+        if hook.last_tap.is_some_and(|(last_identity, last)| {
+            last_identity == identity
+                && now.duration_since(last) <= Duration::from_millis(interval_ms)
+        }) {
+            (hook.callback)(HotkeyEvent::Toggle);
+            hook.last_tap = None;
+        } else {
+            hook.last_tap = Some((identity, now));
+        }
     }
 
     let keyboard_hook =

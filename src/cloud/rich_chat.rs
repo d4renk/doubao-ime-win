@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use reqwest::Client;
+use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
 use super::sse::{SseDecoder, SseEvent};
@@ -8,6 +8,109 @@ use super::{http_client, CloudEndpoints, CloudError, RICH_CHAT_TIMEOUT, USER_AGE
 use crate::data::CloudConfig;
 
 const SPEECH_CORRECTION_INSTRUCTION: &str = "删除口头语和重复内容，并结合上下文纠错、调整语序。";
+const CUSTOM_LLM_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CustomLlmTestResult {
+    Success,
+    InvalidConfig,
+    AuthenticationFailed,
+    Unsupported,
+    Timeout,
+    NetworkError,
+    HttpError(u16),
+}
+
+impl CustomLlmTestResult {
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Success)
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::Success => "连接成功，鉴权有效".into(),
+            Self::InvalidConfig => "测试失败，请填写有效的接口地址和密钥".into(),
+            Self::AuthenticationFailed => "鉴权失败，请检查密钥".into(),
+            Self::Unsupported => "服务不支持模型列表测试接口".into(),
+            Self::Timeout => "连接超时，请检查接口地址和网络".into(),
+            Self::NetworkError => "网络错误，请检查接口地址和网络连接".into(),
+            Self::HttpError(status) => format!("连接失败，服务返回状态码 {status}"),
+        }
+    }
+}
+
+pub async fn test_custom_llm(config: &CloudConfig) -> CustomLlmTestResult {
+    let Some(models_url) = custom_llm_models_url(&config.llm_base_url) else {
+        return CustomLlmTestResult::InvalidConfig;
+    };
+    let api_key = config.llm_api_key.trim();
+    if api_key.is_empty() {
+        return CustomLlmTestResult::InvalidConfig;
+    }
+
+    let http = match http_client() {
+        Ok(http) => http,
+        Err(_) => return CustomLlmTestResult::NetworkError,
+    };
+    let response = http
+        .get(models_url)
+        .bearer_auth(api_key)
+        .timeout(CUSTOM_LLM_TEST_TIMEOUT)
+        .send()
+        .await;
+    match response {
+        Ok(response) if response.status().is_success() => CustomLlmTestResult::Success,
+        Ok(response)
+            if matches!(
+                response.status(),
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+            ) =>
+        {
+            CustomLlmTestResult::AuthenticationFailed
+        }
+        Ok(response)
+            if matches!(
+                response.status(),
+                StatusCode::NOT_FOUND
+                    | StatusCode::METHOD_NOT_ALLOWED
+                    | StatusCode::NOT_IMPLEMENTED
+            ) =>
+        {
+            CustomLlmTestResult::Unsupported
+        }
+        Ok(response) => CustomLlmTestResult::HttpError(response.status().as_u16()),
+        Err(error) if error.is_timeout() => CustomLlmTestResult::Timeout,
+        Err(_) => CustomLlmTestResult::NetworkError,
+    }
+}
+
+fn custom_llm_models_url(chat_completions_url: &str) -> Option<Url> {
+    let mut url = Url::parse(chat_completions_url.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return None;
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    let segments = url.path_segments()?.collect::<Vec<_>>();
+    let chat_index = segments
+        .iter()
+        .rposition(|segment| segment.eq_ignore_ascii_case("chat"))?;
+    if segments
+        .get(chat_index + 1)
+        .is_none_or(|segment| !segment.eq_ignore_ascii_case("completions"))
+        || chat_index + 2 != segments.len()
+    {
+        return None;
+    }
+    let models_path = segments[..chat_index]
+        .iter()
+        .chain(std::iter::once(&"models"))
+        .copied()
+        .collect::<Vec<_>>()
+        .join("/");
+    url.set_path(&models_path);
+    Some(url)
+}
 
 pub(crate) fn default_speech_correction_instruction() -> &'static str {
     SPEECH_CORRECTION_INSTRUCTION

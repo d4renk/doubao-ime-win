@@ -94,6 +94,8 @@ pub struct HotkeyConfig {
     /// implementation, while `raw` listens to a Windows keyboard event.
     #[serde(default = "default_hotkey_binding")]
     pub binding: String,
+    /// Trigger behavior: `single_tap`, `double_tap`, or `hold`.
+    /// The legacy `combo` value remains supported as a single-tap shortcut.
     #[serde(default = "default_hotkey_mode")]
     pub mode: String,
     #[serde(default = "default_combo_key")]

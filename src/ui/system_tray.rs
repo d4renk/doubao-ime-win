@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use rust_embed::RustEmbed;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     path::PathBuf,
@@ -26,8 +26,8 @@ use wry::{http::Response, PageLoadEvent, WebContext, WebView, WebViewBuilder};
 use crate::{
     audio::AudioCapture,
     business::{HotkeyEvent, HotkeyManager, RawKeyBinding, VoiceController},
-    cloud::RichChatClient,
-    data::AppConfig,
+    cloud::{test_custom_llm, RichChatClient},
+    data::{AppConfig, CloudConfig},
 };
 
 #[derive(RustEmbed)]
@@ -43,18 +43,25 @@ enum VoiceState {
 }
 
 enum UserEvent {
-    Ipc(IpcCommand),
+    Ipc(Box<IpcCommand>),
     Hotkey(HotkeyEvent),
     Start,
     Stop,
     SetState(VoiceState),
     CaptureResult(std::result::Result<RawKeyBinding, String>),
+    LlmTestResult { success: bool, message: String },
     DragHud,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+struct WindowSizeRequest {
+    width: f64,
+    height: f64,
 }
 
 enum IpcCommand {
     GetConfig,
-    SaveConfig(AppConfig),
+    SaveConfig(Box<AppConfig>),
     CaptureRawKey,
     OpenLogs,
     ShowSettings,
@@ -67,6 +74,9 @@ enum IpcCommand {
     ToggleSettingsMaximize,
     HideSettings,
     DragHud,
+    ResizeSettings(WindowSizeRequest),
+    ResizeHud(WindowSizeRequest),
+    TestCustomLlm(Box<CloudConfig>),
 }
 
 /// Runs the UI shell on the main thread. Audio and network work remain on Tokio.
@@ -82,8 +92,8 @@ pub fn run_app(
     let settings_window = WindowBuilder::new()
         .with_title("豆包语音输入 - 设置")
         .with_decorations(false)
-        .with_inner_size(LogicalSize::new(1120.0, 820.0))
-        .with_min_inner_size(LogicalSize::new(760.0, 640.0))
+        .with_inner_size(LogicalSize::new(820.0, 420.0))
+        .with_min_inner_size(LogicalSize::new(640.0, 420.0))
         .build(&event_loop)?;
     set_settings_immersive_theme(&settings_window);
     let hud_window = WindowBuilder::new()
@@ -92,7 +102,7 @@ pub fn run_app(
         .with_transparent(true)
         .with_always_on_top(true)
         .with_skip_taskbar(true)
-        .with_inner_size(LogicalSize::new(360.0, 156.0))
+        .with_inner_size(LogicalSize::new(260.0, 96.0))
         .with_position(tao::dpi::LogicalPosition::new(
             config.floating_button.position_x as f64,
             config.floating_button.position_y as f64,
@@ -137,7 +147,7 @@ pub fn run_app(
     menu.append(&quit_item)?;
     let _tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("豆包语音输入 - 双击 Ctrl 开始/停止")
+        .with_tooltip("豆包语音输入")
         .with_icon(load_icon()?)
         .build()?;
 
@@ -157,9 +167,15 @@ pub fn run_app(
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16));
         match event {
             Event::UserEvent(command) => match command {
-                UserEvent::Ipc(command) => handle_ipc(command, &settings_webview, &hud_webview, &settings_window, &proxy, &hotkey_manager, &runtime, voice_controller.clone(), &device_id, &mut state, &hud_window),
+                UserEvent::Ipc(command) => handle_ipc(*command, &settings_webview, &hud_webview, &settings_window, &proxy, &hotkey_manager, &runtime, voice_controller.clone(), &device_id, &mut state, &hud_window),
                 UserEvent::Hotkey(HotkeyEvent::Toggle) => {
                     if matches!(state, VoiceState::Recording) { let _ = proxy.send_event(UserEvent::Stop); } else { let _ = proxy.send_event(UserEvent::Start); }
+                }
+                UserEvent::Hotkey(HotkeyEvent::Start) => {
+                    let _ = proxy.send_event(UserEvent::Start);
+                }
+                UserEvent::Hotkey(HotkeyEvent::Stop) => {
+                    let _ = proxy.send_event(UserEvent::Stop);
                 }
                 UserEvent::Start => start_recording(voice_controller.clone(), runtime.clone(), proxy.clone()),
                 UserEvent::Stop => stop_recording(voice_controller.clone(), runtime.clone(), proxy.clone()),
@@ -170,6 +186,7 @@ pub fn run_app(
                     hud_window.set_visible(!matches!(state, VoiceState::Idle) && hud_enabled);
                 }
                 UserEvent::CaptureResult(result) => match result { Ok(binding) => send_event(&settings_webview, &serde_json::json!({"type":"capture_result", "message":format!("已录入：VK {} / 扫描码 {}", binding.vk_code, binding.scan_code), "binding":{"vk_code":binding.vk_code,"scan_code":binding.scan_code,"extended":binding.extended}})), Err(error) => send_event(&settings_webview, &serde_json::json!({"type":"capture_result", "message":format!("录入失败：{error}")})) },
+                UserEvent::LlmTestResult { success, message } => send_event(&settings_webview, &serde_json::json!({"type":"llm_test_result", "success":success, "message":message})),
                 UserEvent::DragHud => { let _ = hud_window.drag_window(); }
             },
             Event::MainEventsCleared => {
@@ -298,8 +315,52 @@ fn handle_ipc(
         IpcCommand::DragHud => {
             let _ = proxy.send_event(UserEvent::DragHud);
         }
+        IpcCommand::ResizeSettings(size) => {
+            if !settings_window.is_maximized() {
+                resize_window(settings_window, size, LogicalSize::new(640.0, 420.0));
+            }
+        }
+        IpcCommand::ResizeHud(size) => {
+            resize_window(hud_window, size, LogicalSize::new(160.0, 56.0));
+        }
+        IpcCommand::TestCustomLlm(config) => {
+            let proxy = proxy.clone();
+            runtime.spawn(async move {
+                let result = test_custom_llm(&config).await;
+                let _ = proxy.send_event(UserEvent::LlmTestResult {
+                    success: result.is_success(),
+                    message: result.message(),
+                });
+            });
+        }
     }
-    let _ = hud_window;
+}
+
+fn resize_window(window: &Window, requested: WindowSizeRequest, minimum: LogicalSize<f64>) {
+    if !requested.width.is_finite()
+        || !requested.height.is_finite()
+        || requested.width <= 0.0
+        || requested.height <= 0.0
+        || requested.width > 100_000.0
+        || requested.height > 100_000.0
+    {
+        return;
+    }
+    let maximum = window
+        .current_monitor()
+        .map(|monitor| {
+            let size = monitor.size().to_logical::<f64>(monitor.scale_factor());
+            LogicalSize::new(size.width * 0.9, size.height * 0.9)
+        })
+        .unwrap_or_else(|| LogicalSize::new(1_600.0, 900.0));
+    window.set_inner_size(LogicalSize::new(
+        requested
+            .width
+            .clamp(minimum.width, maximum.width.max(minimum.width)),
+        requested
+            .height
+            .clamp(minimum.height, maximum.height.max(minimum.height)),
+    ));
 }
 
 fn start_recording(
@@ -364,7 +425,7 @@ fn build_webview(
         })
         .with_ipc_handler(move |request| match parse_ipc(request.body()) {
             Ok(command) => {
-                let _ = proxy.send_event(UserEvent::Ipc(command));
+                let _ = proxy.send_event(UserEvent::Ipc(Box::new(command)));
             }
             Err(error) => tracing::warn!("Ignoring invalid UI IPC request: {error:#}"),
         })
@@ -388,15 +449,34 @@ fn parse_ipc(message: &str) -> Result<IpcCommand> {
         Some("toggle_settings_maximize") => Ok(IpcCommand::ToggleSettingsMaximize),
         Some("hide_settings") => Ok(IpcCommand::HideSettings),
         Some("drag_hud") => Ok(IpcCommand::DragHud),
-        Some("save_config") => Ok(IpcCommand::SaveConfig(serde_json::from_value(
+        Some("resize_settings") => Ok(IpcCommand::ResizeSettings(parse_size_request(&value)?)),
+        Some("resize_hud") => Ok(IpcCommand::ResizeHud(parse_size_request(&value)?)),
+        Some("test_custom_llm") => Ok(IpcCommand::TestCustomLlm(Box::new(serde_json::from_value(
+            value
+                .get("params")
+                .and_then(|params| params.get("config"))
+                .cloned()
+                .ok_or_else(|| anyhow!("test_custom_llm requires params.config"))?,
+        )?))),
+        Some("save_config") => Ok(IpcCommand::SaveConfig(Box::new(serde_json::from_value(
             value
                 .get("params")
                 .and_then(|params| params.get("config"))
                 .cloned()
                 .ok_or_else(|| anyhow!("save_config requires params.config"))?,
-        )?)),
+        )?))),
         _ => Err(anyhow!("unknown IPC command")),
     }
+}
+
+fn parse_size_request(value: &serde_json::Value) -> Result<WindowSizeRequest> {
+    serde_json::from_value(
+        value
+            .get("params")
+            .cloned()
+            .ok_or_else(|| anyhow!("resize command requires params"))?,
+    )
+    .map_err(Into::into)
 }
 
 fn logs_directory() -> PathBuf {

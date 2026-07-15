@@ -9,7 +9,9 @@ use std::time::Duration;
 
 pub use lexicon::NerLexicon;
 pub use ner::{NerClient, NerWord};
-pub use rich_chat::{RichChatClient, RichChatInput, RichChatResult};
+pub use rich_chat::{
+    test_custom_llm, CustomLlmTestResult, RichChatClient, RichChatInput, RichChatResult,
+};
 
 pub const NER_TASK_BUDGET: Duration = Duration::from_secs(2);
 pub const RICH_CHAT_TIMEOUT: Duration = Duration::from_secs(10);
