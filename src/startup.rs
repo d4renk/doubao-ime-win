@@ -14,12 +14,8 @@ pub(crate) fn is_enabled() -> Result<bool> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{
-        ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, ERROR_UNSUPPORTED_TYPE,
-    };
-    use windows::Win32::System::Registry::{
-        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ,
-    };
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, ERROR_UNSUPPORTED_TYPE};
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
 
     let subkey = wide_null(RUN_KEY);
     let value_name = wide_null(VALUE_NAME);
@@ -66,8 +62,7 @@ pub(crate) fn is_enabled() -> Result<bool> {
         .position(|unit| *unit == 0)
         .unwrap_or(length);
     let registered = OsString::from_wide(&value[..length]);
-    let executable =
-        std::env::current_exe().context("unable to locate the current executable")?;
+    let executable = std::env::current_exe().context("unable to locate the current executable")?;
     let expected = startup_command(executable);
     Ok(registered == expected)
 }
@@ -113,11 +108,10 @@ pub(crate) fn set_enabled(enabled: bool) -> Result<()> {
             .chain(std::iter::once(0))
             .flat_map(u16::to_le_bytes)
             .collect::<Vec<_>>();
-        let result = unsafe {
-            RegSetValueExW(key, PCWSTR(value_name.as_ptr()), None, REG_SZ, Some(&data))
-        }
-        .ok()
-        .context("unable to create the Windows startup entry");
+        let result =
+            unsafe { RegSetValueExW(key, PCWSTR(value_name.as_ptr()), None, REG_SZ, Some(&data)) }
+                .ok()
+                .context("unable to create the Windows startup entry");
         let _ = unsafe { RegCloseKey(key) };
         result
     } else {
