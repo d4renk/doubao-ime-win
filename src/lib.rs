@@ -8,6 +8,7 @@ pub mod audio;
 pub mod business;
 pub mod cloud;
 pub mod data;
+mod startup;
 pub mod ui;
 
 /// Install the process-wide Rustls crypto provider used by all network clients.

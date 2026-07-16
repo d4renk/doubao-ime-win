@@ -237,7 +237,10 @@ fn handle_ipc(
     hud_window: &Window,
 ) {
     match command {
-        IpcCommand::GetConfig => match AppConfig::load_or_default() {
+        IpcCommand::GetConfig => match AppConfig::load_or_default().and_then(|mut config| {
+            config.general.auto_start = crate::startup::is_enabled()?;
+            Ok(config)
+        }) {
             Ok(config) => send_event(
                 settings,
                 &serde_json::json!({"type":"config", "config":config}),
@@ -258,6 +261,7 @@ fn handle_ipc(
             };
             if let Err(error) = hotkeys
                 .reconfigure(&config.hotkey)
+                .and_then(|_| crate::startup::set_enabled(config.general.auto_start))
                 .and_then(|_| config.save())
             {
                 send_error(settings, error);
